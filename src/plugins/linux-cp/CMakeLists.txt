@@ -26,6 +26,7 @@ endif()
 
 vpp_plugin_find_library(linux-cp LIBNL3_LIB libnl-3.so)
 vpp_plugin_find_library(linux-cp LIBNL3_ROUTE_LIB libnl-route-3.so.200)
+vpp_plugin_find_library(linux-cp LIBNL3_XFRM_LIB libnl-xfrm-3.so.200)
 
 include_directories(${LIBNL3_INCLUDE_DIR}/libnl3)
 include_directories(${LIBMNL_INCLUDE_DIR})
@@ -72,7 +73,10 @@ add_vpp_plugin(linux_nl
   SOURCES
   lcp_router.c
   lcp_nl.c
+  lcp_ipsec.c
+  lcp_xfrm_nl.c
 
   LINK_LIBRARIES
+  ${LIBNL3_XFRM_LIB}
   lcp
 )
