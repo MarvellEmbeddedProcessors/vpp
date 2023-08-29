@@ -107,8 +107,7 @@ arm_init (vlib_main_t *vm, perfmon_source_t *src)
   clib_bitmap_alloc (bitmap, 256);
 
   struct dirent *dir_entry;
-  const char *event_path =
-    "/sys/bus/event_source/devices/armv8_pmuv3_0/events";
+  const char *event_path = "/sys/bus/event_source/devices/armv8_pmuv3/events";
   DIR *event_dir = opendir (event_path);
 
   if (event_dir == NULL)
