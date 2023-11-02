@@ -431,6 +431,11 @@ I:	dispatch-trace
 M:	Dave Barach <vpp@barachs.net>
 F:	src/plugins/dispatch-trace
 
+Plugin - Marvell OCTEON End Point Control Agent
+I:     octep-cp
+M:     Bheemappa Agasimundin <bagasimundin@marvell.com>
+F:     src/plugins/octep_cp/
+
 Plugin - DPDK
 I:	dpdk
 M:	Damjan Marion <damarion@cisco.com>
