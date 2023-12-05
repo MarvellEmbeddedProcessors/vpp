@@ -24,8 +24,8 @@
 /* Keeping size in sync with libnl lib */
 #define ALGO_NAME	       64
 #define INB_PROTECT_POL_PRIO   9999
-#define IS_TUNNEL_MODE_ENABLED !!nm->is_tunnel_mode
-/* Size in bytes */
+#define IS_ROUTE_MODE_ENABLED  !!nm->is_route_mode
+/* size in bytes */
 #define GCM_SALT_SIZE 4
 
 #define cpu_to_be(x, bits)                                                    \
@@ -66,6 +66,23 @@ typedef struct sa_expire_req
   struct nlmsghdr nlmsg_hdr;
   struct xfrm_user_expire xfrm_expire;
 } sa_expire_req_nl_t;
+
+static inline int
+lcp_xfrm_is_ipsec_intf_exist (u8 *if_name, u32 *sw_if_index)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  uword *p;
+  vnet_hw_interface_t *hi;
+
+  p = hash_get (vnm->interface_main.hw_interface_by_name, if_name);
+  if (!p)
+    return 0;
+
+  hi = vnet_get_hw_interface (vnm, p[0]);
+  sw_if_index[0] = hi->sw_if_index;
+
+  return 1;
+}
 
 u32 *
 get_mcast_addr (u32 *ip6addr)
@@ -509,18 +526,27 @@ find_tunnel_db (ip_address_t *saddr, ip_address_t *daddr, u8 dir, u8 is_ipv6)
 
 static inline void
 lcp_xfrm_update_tunnel (ip_address_t *saddr, ip_address_t *daddr, u8 dir,
-			u32 sa_id, u8 is_ipv6)
+			u32 sa_id, u8 is_ipv6, struct xfrmnl_sa *sa)
 {
   u32 sa_out = 0, *sa_ins = NULL;
   ipsec_sa_t *sai = NULL, *sao = NULL;
   index_t itpi;
   u32 sw_if_index;
   int rv;
+  u8 *s = NULL;
+  u8 instance = xfrmnl_sa_get_reqid (sa);
 
   if (dir)
     return;
 
-  sw_if_index = find_tunnel_db (saddr, daddr, dir, is_ipv6);
+  if (nm->interface_type == NL_INTERFACE_TYPE_IPIP)
+    sw_if_index = find_tunnel_db (saddr, daddr, dir, is_ipv6);
+  else
+    {
+      s = format (s, "ipsec%d", instance);
+      lcp_xfrm_is_ipsec_intf_exist (s, &sw_if_index);
+      vec_free (s);
+    }
   if (sw_if_index == ~0)
     return;
 
@@ -577,8 +603,8 @@ nl_xfrm_sa_del (struct xfrmnl_sa *sa)
   is_outb =
     lcp_xfrm_get_sa_direction (&saddr.ip, &daddr.ip, &sw_if_index, is_ip6);
 
-  if (IS_TUNNEL_MODE_ENABLED)
-    lcp_xfrm_update_tunnel (&saddr, &daddr, is_outb, id, is_ip6);
+  if (IS_ROUTE_MODE_ENABLED)
+    lcp_xfrm_update_tunnel (&saddr, &daddr, is_outb, id, is_ip6, sa);
   else if ((sw_if_index != ~0) && (is_outb == 0))
     {
       is_outb = 0;
@@ -599,7 +625,7 @@ nl_xfrm_sa_del (struct xfrmnl_sa *sa)
 		    &saddr, format_ip_address, &daddr);
     }
 
-  if (!IS_TUNNEL_MODE_ENABLED)
+  if (!IS_ROUTE_MODE_ENABLED)
     lcp_xfrm_delete_spd (spd_id, &saddr, &daddr, is_ip6, is_outb);
   return;
 }
@@ -669,9 +695,48 @@ get_reverse_sa_by_tun_ip (ip_address_t *saddr, ip_address_t *daddr, u8 is_ipv6,
 }
 
 static inline int
-lcp_xfrm_create_tunnel (struct xfrmnl_sa *sa, int *sw_if_index, u8 is_ipv6,
-			u8 dir, ip_address_t *saddr, ip_address_t *daddr,
-			u32 phy_sw_if_index)
+lcp_xfrm_create_ipsec_tunnel (struct xfrmnl_sa *sa, int *sw_if_index,
+			      u32 phy_sw_if_index)
+{
+  clib_error_t *ret;
+  int rv = 0;
+  u8 *s = NULL;
+  int instance = xfrmnl_sa_get_reqid (sa);
+
+  s = format (s, "ipsec%d", instance);
+  rv = lcp_xfrm_is_ipsec_intf_exist (s, (u32 *) sw_if_index);
+  vec_free (s);
+
+  if (rv)
+    return 0;
+
+  rv = ipsec_itf_create (instance, TUNNEL_MODE_P2P, (u32 *) sw_if_index);
+  if (rv == VNET_API_ERROR_INVALID_REGISTRATION)
+    {
+      NL_XFRM_ERR ("Tunnel instance %x exists sw_if_idx: %x", instance,
+		   sw_if_index[0]);
+      return 0;
+    }
+
+  NL_XFRM_DBG ("Tunnel instance %x created succesfully.. index: %x", instance,
+	       *sw_if_index);
+
+  ret = vnet_sw_interface_set_flags (vnet_get_main (), *sw_if_index,
+				     VNET_SW_INTERFACE_FLAG_ADMIN_UP);
+  if (ret)
+    {
+      NL_XFRM_ERR ("Error setting flags on tunnel");
+      return -1;
+    }
+
+  vnet_sw_interface_update_unnumbered (*sw_if_index, phy_sw_if_index, 1);
+  return 0;
+}
+
+static inline int
+lcp_xfrm_create_ipip_tunnel (struct xfrmnl_sa *sa, int *sw_if_index,
+			     u8 is_ipv6, u8 dir, ip_address_t *saddr,
+			     ip_address_t *daddr, u32 phy_sw_if_index)
 {
   tunnel_encap_decap_flags_t tflags = TUNNEL_ENCAP_DECAP_FLAG_NONE;
   u8 fib_index = 0, instance = 0;
@@ -794,8 +859,12 @@ lcp_xfrm_configure_route_mode (struct xfrmnl_sa *sa, u8 is_ipv6,
   int ret, sw_if_index = -1;
   uword *p = NULL;
 
-  ret = lcp_xfrm_create_tunnel (sa, &sw_if_index, is_ipv6, dir, saddr, daddr,
-				phy_sw_if_idx);
+  if (nm->interface_type == NL_INTERFACE_TYPE_IPIP)
+    ret = lcp_xfrm_create_ipip_tunnel (sa, &sw_if_index, is_ipv6, dir, saddr,
+				       daddr, phy_sw_if_idx);
+  else
+    ret = lcp_xfrm_create_ipsec_tunnel (sa, &sw_if_index, phy_sw_if_idx);
+
   if (ret < 0)
     return;
 
@@ -944,7 +1013,7 @@ nl_xfrm_sa_add (struct xfrmnl_sa *sa)
   if (!dir)
     flags |= IPSEC_SA_FLAG_IS_INBOUND;
 
-  if (IS_TUNNEL_MODE_ENABLED)
+  if (nm->interface_type == NL_INTERFACE_TYPE_IPIP)
     {
       /*
        * Other tunnel flags of VPP defined under
@@ -1011,7 +1080,7 @@ nl_xfrm_sa_add (struct xfrmnl_sa *sa)
   NL_XFRM_INFO ("ipsec sa add %x success %U -> %U", id, format_ip_address,
 		&saddr, format_ip_address, &daddr);
 
-  if (IS_TUNNEL_MODE_ENABLED)
+  if (IS_ROUTE_MODE_ENABLED)
     lcp_xfrm_configure_route_mode (sa, is_ipv6, &saddr, &daddr, id, dir,
 				   sw_if_index);
 
@@ -1229,7 +1298,10 @@ lcp_xfrm_tun_cfg_destroy (ip_address_t *sel_daddr, u8 sel_daddr_prefix,
       return;
     }
 
-  rv = ipip_del_tunnel (sw_if_index);
+  if (nm->interface_type == NL_INTERFACE_TYPE_IPIP)
+    rv = ipip_del_tunnel (sw_if_index);
+  else
+    rv = ipsec_itf_delete (sw_if_index);
   if (rv)
     NL_XFRM_ERR ("Tunnel deletion failure (err: %d)", rv);
   return;
@@ -1257,7 +1329,7 @@ nl_xfrm_sp_del (struct xfrmnl_sp *sp)
   lcp_xfrm_mk_ipaddr (sel_dst, &sel_daddr);
   lcp_xfrm_mk_ipaddr (sel_src, &sel_saddr);
 
-  if (IS_TUNNEL_MODE_ENABLED)
+  if (IS_ROUTE_MODE_ENABLED)
     {
       lcp_xfrm_tun_cfg_destroy (&sel_daddr, sel_daddr_prefix, is_ip6);
     }
@@ -1347,7 +1419,7 @@ nl_xfrm_sp_add (struct xfrmnl_sp *sp, u8 num)
 
   sa_id = lcp_xfrm_ipsec_sa_id_table (spi, &daddr);
 
-  if (IS_TUNNEL_MODE_ENABLED)
+  if (IS_ROUTE_MODE_ENABLED)
     {
       /*
        * Add a fib entry for dest tun selectors via ipipX interface.

@@ -34,6 +34,7 @@
 #include <vnet/ipip/ipip.h>
 #include <vnet/ipsec/ipsec.h>
 #include <vnet/ipsec/ipsec_tun.h>
+#include <vnet/ipsec/ipsec_itf.h>
 
 #include <vnet/dpo/drop_dpo.h>
 #include <vnet/fib/fib_table.h>
@@ -113,6 +114,12 @@ typedef enum nl_event_type_t_
   NL_EVENT_ERR,
 } nl_event_type_t;
 
+typedef enum nl_interface_type_t_
+{
+  NL_INTERFACE_TYPE_IPIP = 1,
+  NL_INTERFACE_TYPE_IPSEC
+} nl_interface_type_t;
+
 typedef struct nl_msg_info
 {
   struct nl_msg *msg;
@@ -124,7 +131,8 @@ typedef struct nl_xfrm_main
   nl_status_t nl_status;
   struct nl_sock *sk_xfrm;
   u8 xfrm_fd;
-  u8 is_tunnel_mode;
+  u8 is_route_mode;
+  nl_interface_type_t interface_type;
   vlib_log_class_t nl_logger;
   nl_xfrm_vft_t *nl_xfrm_vfts;
   nl_msg_info_t *nl_msg_queue;

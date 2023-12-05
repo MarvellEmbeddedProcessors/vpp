@@ -530,21 +530,33 @@ static clib_error_t *
 lcp_xfrm_itf_pair_config (vlib_main_t *vm, unformat_input_t *input)
 {
   u32 buf_size, batch_size, batch_delay_ms;
+  char *tunnel_name = NULL;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (input, "enable-route-mode-ipsec"))
-	nm->is_tunnel_mode = 1;
+	nm->is_route_mode = 1;
       else if (unformat (input, "nl-rx-buffer-size %u", &buf_size))
 	lcp_xfrm_nl_set_buffer_size (buf_size);
       else if (unformat (input, "nl-batch-size %u", &batch_size))
 	lcp_xfrm_nl_set_batch_size (batch_size);
       else if (unformat (input, "nl-batch-delay-ms %u", &batch_delay_ms))
 	lcp_xfrm_nl_set_batch_delay (batch_delay_ms);
+      else if (unformat (input, "interface %s", tunnel_name))
+	{
+	  if (!clib_strcmp (tunnel_name, "ipsec"))
+	    nm->interface_type = NL_INTERFACE_TYPE_IPSEC;
+
+	  vec_free (tunnel_name);
+	}
       else
 	return clib_error_return (0, "invalid netlink option: %U",
 				  format_unformat_error, input);
     }
+
+  if (nm->interface_type && !nm->is_route_mode)
+    return clib_error_return (
+      0, "enable-route-mode-ipsec configuration is missing");
 
   return NULL;
 }
