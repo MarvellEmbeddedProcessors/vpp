@@ -285,10 +285,16 @@ parse_if (config_setting_t *lcfg, struct if_cfg *iface)
 static int
 parse_info (config_setting_t *lcfg, struct octep_fw_info *info)
 {
-  int ival, ret;
+  int ival = 0, ret;
 
   ret = config_setting_lookup_int (lcfg, CFG_TOKEN_INFO_PKIND, &ival);
-  info->pkind = (ret == CONFIG_TRUE) ? ival : 0;
+  if (ival)
+    {
+      info->pkind = OCTEP_PKIND_OL_SUPPORTED;
+      info->fsz = OCTEP_FSZ_OL_SUPPORTED;
+      info->rx_offloads = OCTEP_RX_OFFLOAD_CKSUM;
+      info->tx_offloads = OCTEP_TX_OFFLOAD_CKSUM;
+    }
 
   ret = config_setting_lookup_int (lcfg, CFG_TOKEN_INFO_HB_INTERVAL, &ival);
   info->hb_interval = (ret == CONFIG_TRUE) ? ival : DEFAULT_HB_INTERVAL_MSECS;
