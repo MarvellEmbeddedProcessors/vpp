@@ -29,7 +29,7 @@
 #define CP_VERSION_CURRENT                                                    \
   (OCTEP_CP_VERSION (CP_VERSION_MAJOR, CP_VERSION_MINOR, CP_VERSION_VARIANT))
 
-#define SOC_CFG_PATH "/usr/bin/cn106xx.cfg"
+#define SOC_CFG_PATH "/etc/vpp/octep_cp_cn10kxx.cfg"
 struct octep_pf_vf_cfg cfg_idx;
 
 /*
@@ -221,7 +221,7 @@ VLIB_INIT_FUNCTION (octep_cp_init) = {
 
 VLIB_PLUGIN_REGISTER () = {
   .version = VPP_BUILD_VER,
-  .description = "Octep Control Agent",
+  .description = "OCTEON PCI End-point Control Agent",
   .default_disabled = 1,
 };
 

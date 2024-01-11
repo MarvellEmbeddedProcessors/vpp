@@ -51,3 +51,4 @@ add_vpp_plugin(octep_cp
   LINK_FLAGS
   "${OCTEP_LINK_FLAGS}"
 )
+install(FILES octep_cp_cn10kxx.cfg DESTINATION etc/vpp/ COMPONENT vpp-plugin-octep_cp)
