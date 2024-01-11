@@ -43,5 +43,5 @@ OCTEON connected to host.
 	 - create required VF's with 'echo 1 > /sys/bus/pci/devices/0000\:17\:00.0/sriov_numvfs'
 
 #### Configuration
-This plugin uses /usr/bin/cn106xx.cfg configuration file to configure
+This plugin uses /usr/bin/cn10kxx.cfg configuration file to configure
 PCIe end point.
