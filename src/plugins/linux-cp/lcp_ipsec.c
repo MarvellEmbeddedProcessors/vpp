@@ -998,7 +998,7 @@ nl_xfrm_sa_add (struct xfrmnl_sa *sa)
     }
 
   rv = ipsec_sa_add_and_lock (id, spi, proto, crypto_alg, &ck, integ_alg, &ik,
-			      flags, salt, udp_src, udp_dst, &tun, &sai);
+			      flags, salt, udp_src, udp_dst, 0, &tun, &sai);
   if (rv)
     {
       NL_XFRM_ERR ("ipsec sa add %x failure(err: %d) %U -> %U", id, rv,
