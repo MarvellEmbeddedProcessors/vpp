@@ -531,7 +531,7 @@ lcp_xfrm_update_tunnel (ip_address_t *saddr, ip_address_t *daddr, u8 dir,
   u32 sa_out = 0, *sa_ins = NULL;
   ipsec_sa_t *sai = NULL, *sao = NULL;
   index_t itpi;
-  u32 sw_if_index;
+  u32 sw_if_index = ~0;
   int rv;
   u8 *s = NULL;
   u8 instance = xfrmnl_sa_get_reqid (sa);
