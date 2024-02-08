@@ -23,11 +23,17 @@
 /* Control plane version */
 #define CP_VERSION_MAJOR   1
 #define CP_VERSION_MINOR   0
-#define CP_VERSION_VARIANT 0
-#define MAX_EVENTS	   6
+#define CP_VERSION_VARIANT_MIN 0
+#define CP_VERSION_VARIANT_CUR 1
+#define MAX_EVENTS	       16
 
-#define CP_VERSION_CURRENT                                                    \
-  (OCTEP_CP_VERSION (CP_VERSION_MAJOR, CP_VERSION_MINOR, CP_VERSION_VARIANT))
+#define CP_VERSION_MIN                                                        \
+  (OCTEP_CP_VERSION (CP_VERSION_MAJOR, CP_VERSION_MINOR,                      \
+		     CP_VERSION_VARIANT_MIN))
+
+#define CP_VERSION_MAX                                                        \
+  (OCTEP_CP_VERSION (CP_VERSION_MAJOR, CP_VERSION_MINOR,                      \
+		     CP_VERSION_VARIANT_CUR))
 
 #define SOC_CFG_PATH "/etc/vpp/octep_cp_cn10kxx.cfg"
 struct octep_pf_vf_cfg cfg_idx;
@@ -137,8 +143,8 @@ octep_cp_process (vlib_main_t *vm, vlib_node_runtime_t *node,
   signal (SIGALRM, sigint_handler);
 
   cp_lib_cfg.ndoms = cfg.npem;
-  cp_lib_cfg.min_version = CP_VERSION_CURRENT;
-  cp_lib_cfg.max_version = CP_VERSION_CURRENT;
+  cp_lib_cfg.min_version = CP_VERSION_MIN;
+  cp_lib_cfg.max_version = CP_VERSION_MAX;
   cfg_idx.n_pems = cfg.npem;
   pem = cfg.pems;
   i = 0;
