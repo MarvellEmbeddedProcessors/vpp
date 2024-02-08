@@ -42,6 +42,7 @@ struct app_cfg cfg;
 #define CFG_TOKEN_IF_SPEED	     "speed"
 #define CFG_TOKEN_IF_SMODES	     "supported_modes"
 #define CFG_TOKEN_IF_AMODES	     "advertised_modes"
+#define CFG_TOKEN_IF_NAME	     "if_name"
 #define CFG_TOKEN_INFO_PKIND	     "pkind"
 #define CFG_TOKEN_INFO_HB_INTERVAL   "hb_interval"
 #define CFG_TOKEN_INFO_HB_MISS_COUNT "hb_miss_count"
@@ -250,6 +251,7 @@ parse_if (config_setting_t *lcfg, struct if_cfg *iface)
 {
   config_setting_t *mac;
   int ival, i, n;
+  char *if_name = NULL;
 
   if (config_setting_lookup_int (lcfg, CFG_TOKEN_IF_MTU, &ival))
     iface->mtu = ival;
@@ -277,6 +279,10 @@ parse_if (config_setting_t *lcfg, struct if_cfg *iface)
     iface->supported_modes = ival;
   if (config_setting_lookup_int (lcfg, CFG_TOKEN_IF_AMODES, &ival))
     iface->advertised_modes = ival;
+  if (config_setting_lookup_string (lcfg, CFG_TOKEN_IF_NAME,
+				    (const char **) &if_name))
+    clib_memcpy (iface->if_name, if_name, strlen (if_name));
+
   iface->max_rx_pktlen = get_max_rx_pktlen ();
 
   return 0;

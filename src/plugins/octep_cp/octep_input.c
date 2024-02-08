@@ -37,6 +37,8 @@ static const uint32_t if_stats_sz =
 static const uint32_t info_sz =
   sizeof (struct octep_ctrl_net_h2f_resp_cmd_get_info);
 
+#define CTRL_NET_RESP_OFFLOADS_SZ sizeof (struct octep_ctrl_net_offloads)
+
 /*
  * Initialize max receive burst size and each message size.
  *
@@ -208,10 +210,6 @@ process_link_info (struct if_cfg *iface, struct octep_ctrl_net_h2f_req *req,
       iface->autoneg = req->link_info.info.autoneg;
       iface->pause_mode = req->link_info.info.pause;
       iface->speed = req->link_info.info.speed;
-      // clib_warning ("Cmd: set link info: am:%lx a:%x p:%x s:%x\n",
-      //	    req->link_info.info.advertised_modes,
-      //	    req->link_info.info.autoneg, req->link_info.info.pause,
-      //	    req->link_info.info.speed);
     }
   resp->hdr.s.reply = OCTEP_CTRL_NET_REPLY_OK;
 
@@ -227,6 +225,106 @@ process_get_info (struct octep_fw_info *info,
   resp->hdr.s.reply = OCTEP_CTRL_NET_REPLY_OK;
 
   return info_sz;
+}
+
+clib_error_t *
+octep_enable_disable_offload_feature_arc (u8 *if_name, bool enable)
+{
+  uword *p;
+  u32 hw_if_index;
+  clib_error_t *error = NULL;
+  vnet_hw_interface_t *hi = NULL;
+  vnet_feature_registration_t *reg;
+  vnet_main_t *vnm = vnet_get_main ();
+
+  if (!(p = hash_get (vnm->interface_main.hw_interface_by_name, if_name)))
+    return clib_error_return (0, "Unknown interfacse name (%s)... ",
+			      (const char *) if_name);
+
+  hw_if_index = p[0];
+  hi = vnet_get_hw_interface (vnm, hw_if_index);
+
+  reg = vnet_get_feature_reg ((const char *) DEVICE_INPUT,
+			      (const char *) DPU_INPUT_NODE);
+  if (reg == 0)
+    {
+      error = clib_error_return (
+	0,
+	"Feature (%s) not registered to arc (%s)... See 'show "
+	"features verbose' for valid feature/arc combinations. ",
+	DPU_INPUT_NODE, DEVICE_INPUT);
+      return error;
+    }
+
+  if (reg->enable_disable_cb)
+    error = reg->enable_disable_cb (hi->sw_if_index, enable);
+
+  if (error)
+    return error;
+
+  vnet_feature_enable_disable ((const char *) DEVICE_INPUT,
+			       (const char *) DPU_INPUT_NODE, hi->sw_if_index,
+			       enable, 0, 0);
+
+  reg = vnet_get_feature_reg ((const char *) DEVICE_OUTPUT,
+			      (const char *) DPU_OUTPUT_NODE);
+  if (reg == 0)
+    return clib_error_return (
+      0,
+      "Feature (%s) not registered to arc (%s)... See 'show "
+      "features verbose' for valid feature/arc combinations. ",
+      DPU_OUTPUT_NODE, DEVICE_OUTPUT);
+
+  if (reg->enable_disable_cb)
+    error = reg->enable_disable_cb (hi->sw_if_index, enable);
+
+  if (error)
+    return error;
+
+  vnet_feature_enable_disable ((const char *) DEVICE_OUTPUT,
+			       (const char *) DPU_OUTPUT_NODE, hi->sw_if_index,
+			       enable, 0, 0);
+
+  return error;
+}
+
+static int
+process_offloads (struct octep_fw_info *info,
+		  struct octep_ctrl_net_h2f_req *req,
+		  struct octep_ctrl_net_h2f_resp *resp, struct if_cfg *iface)
+{
+
+  if (req->offloads.cmd == OCTEP_CTRL_NET_CMD_GET)
+    {
+      resp->offloads.rx_offloads = info->rx_offloads;
+      resp->offloads.tx_offloads = info->tx_offloads;
+      resp->offloads.ext_offloads = info->ext_offloads;
+      resp->hdr.s.reply = OCTEP_CTRL_NET_REPLY_OK;
+      return CTRL_NET_RESP_OFFLOADS_SZ;
+    }
+
+  /**
+   * Disable/enable feature arc based on Host request or existing config.
+   */
+  if (!req->offloads.offloads.rx_offloads &&
+      !req->offloads.offloads.tx_offloads)
+    {
+      if (octep_enable_disable_offload_feature_arc (iface->if_name, 0))
+	return 0;
+    }
+  else if (!info->rx_offloads && !info->tx_offloads)
+    {
+      if (octep_enable_disable_offload_feature_arc (iface->if_name, 1))
+	return 0;
+    }
+
+  info->rx_offloads = req->offloads.offloads.rx_offloads;
+  info->tx_offloads = req->offloads.offloads.tx_offloads;
+  info->ext_offloads = req->offloads.offloads.ext_offloads;
+
+  resp->hdr.s.reply = OCTEP_CTRL_NET_REPLY_OK;
+
+  return CTRL_NET_RESP_OFFLOADS_SZ;
 }
 
 static int
@@ -274,6 +372,9 @@ process_msg (union octep_cp_msg_info *ctx, struct octep_cp_msg *msg)
       break;
     case OCTEP_CTRL_NET_H2F_CMD_GET_INFO:
       resp_sz += process_get_info (info, req, &resp);
+      break;
+    case OCTEP_CTRL_NET_H2F_CMD_OFFLOADS:
+      resp_sz += process_offloads (info, req, &resp, iface);
       break;
     default:
       clib_warning ("Unhandled Cmd : %u\n", req->hdr.s.cmd);
