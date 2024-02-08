@@ -7,6 +7,10 @@
 #ifndef __OCTEP_INPUT_H__
 #define __OCTEP_INPUT_H__
 
+#define DEVICE_INPUT	"device-input"
+#define DPU_INPUT_NODE	"h2d-input"
+#define DEVICE_OUTPUT	"interface-output"
+#define DPU_OUTPUT_NODE "d2h-output"
 /*
  * Initialize loop mode implementation.
  * return value: 0 on success, -errno on failure.

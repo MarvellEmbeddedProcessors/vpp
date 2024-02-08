@@ -19,7 +19,7 @@
 #define MIN_HB_INTERVAL_MSECS	  1000
 #define MAX_HB_INTERVAL_MSECS	  15000
 #define DEFAULT_HB_INTERVAL_MSECS MIN_HB_INTERVAL_MSECS
-
+#define IF_NAME_MAX_LEN		  256
 #define DEFAULT_HB_MISS_COUNT 20
 
 /* Network interface stats */
@@ -53,6 +53,8 @@ struct if_cfg
   u64 supported_modes;
   /* OCTEP_LINK_MODE_XXX */
   u64 advertised_modes;
+  /* Interface name */
+  u8 if_name[IF_NAME_MAX_LEN];
 };
 
 /* Virtual function configuration */
