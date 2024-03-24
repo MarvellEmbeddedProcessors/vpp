@@ -1,0 +1,169 @@
+XFRM NETLINK SUPPORT IN LINUX NL PLUGIN:
+========================================
+
+Introduction:
+-------------
+
+The purpose of introducing Linux XFRM netlink support in the linux_nl_plugin
+is to mirror Linux XFRM configurations to the VPP IPsec subsystem. These
+configurations can be manually set using ip commands or via keying daemons
+like StrongSwan. In both cases, the netlink notifications generated from
+Linux are read by this XFRM module and translated into VPP's IPsec configuration.
+
+Highlights:
+===========
+
+1. The XFRM module is part of the existing linux-nl plugin, added as a new XFRM
+   process type node.From now on, it will be referred to as the XFRM node/plugin.
+2. The XFRM node piggybacks on the libnl-xfrm system library for parsing/extracting
+   netlink messages.
+3. The XFRM node will depend on Kernel XFRM netlink notifications. To read these
+   messages, the XFRM node registers to XFRMGRP_SA, XFRMGRP_POLICY, and XFRMGRP_EXPIRE
+   groups of the NETLINK_XFRM protocol of the AF_NETLINK family.
+3. The XFRM node will support both policy-based and tunnel/route-based IPsec. The mode
+   can be selected via startup.conf.
+4. The plugin will support packet and byte-based soft life and hard life expiry as the
+   datapath will be handled in VPP.
+
+Design:
+=======
+
+The XFRM module is divided into three components: reading XFRM NL notifications
+configuring VPP IPsec based on NL notifications, and handling SA expiry.
+
+1. Reading the XFRM NL notifications:
+=====================================
+
+   In this design, a process similar to the Linux netlink plugin is followed. It
+   includes creating a netlink socket of type NETLINK_XFRM and registering it to
+   multicast groups such as XFRMGRP_SA, XFRMGRP_POLICY, and XFRMGRP_EXPIRE. Once
+   the netlink (NL) messages are read from the NETLINK_XFRM socket, they are handled
+   based on their message type. This handling process is where the second part of the
+   plugin comes into play: configuring VPP IPsec
+
+2. Configuring VPP IPsec:
+========================
+
+   Based on the startup configuration, VPP IPsec will be configured to run in one of
+   the two IPsec modes.
+
+   Policy based IPsec:
+   -------------------
+
+   a.In VPP IPsec, the Security Association (SA) and Policy are closely linked
+     during configuration. Each SA has a unique SA ID. However, the XFRM kernel
+     does not inherently recognize SA identifiers. In this plugin, we generate a
+     unique 32-bit SA ID based on the Security Parameter Index (SPI), Destination
+     IP (DIP), and Protocol (Proto) for a given SA. This ID is then used to associate
+     the SA with a policy.
+
+   b.Because of a limitation (as described in point 3 of the limitations), adding
+     an SA message will also handle inbound policy addition. However, outbound policy
+     handling is part of the Policy notification process.
+
+
+   c.Using the tunnel endpoint IP address, we determine the VPP interface on which
+     IPsec/SPD (Security Policy Database) needs to be enabled.
+
+   d.After creating and enabling the Security Policy Database (SPD) on a specific
+     interface, all packets passing through that interface undergo policy lookup.
+     If a packet doesn't match any existing policies, we internally add "allow all"
+     bypass policies. These bypass policies allow essential messages such as IKE (Internet
+     Key Exchange), Neighbor Discovery, and keep-alive messages to pass through.
+
+   e.The configuration of bypass policies is handled internally, and there won't be a Netlink
+     (NL) notification for it. These bypass policies are added when the first Security
+     Association (SA) or protect policy notification is handled. They are subsequently
+     deleted when there are no more protect policies in the system.
+
+
+   Route based IPsec:
+   ------------------
+
+   a.In a manner similar to the policy-based scheme, we derive Security Association (SA)
+     IDs here. Additionally, as part of the SA notification process, we create an IPIP
+     tunnel or an IPsec interface. This tunnel is then protected with inbound (inb) and
+     outbound (outb) SAs. It's important to note that a maximum of 4 inbound SAs and
+     1 outbound SA can be bound to a tunnel.
+
+   b.In the context of Policy notifications, we only handle FIB (Forwarding Information Base)
+     entries via tunnel interfaces. We do not add policies in route mode.
+
+3. SA Expiry:
+=============
+
+VPP (Vector Packet Processing) does not support soft/hard byte or packet-based expiries directly.
+To address this limitation, we've implemented a process node that continuously polls all
+available SA (Security Association) counters at fixed intervals. Here's how it works:
+
+    a. Expiry Values and Message Creation:
+
+      1. The plugin receives expiry values from the XFRM SA (Linux Security Association) Netlink (NL)
+         notifications.
+      2. Based on these values, the plugin constructs an NL SA expiry message (XFRM_MSG_EXPIRE).
+      3. The message specifies whether the expiry is hard or soft.
+
+    b. Kernel Interaction:
+
+      1. The plugin sends the NL SA expiry message to the kernel.
+      2. The kernel validates this message against its database.
+      3. If the expiry is soft, the kernel initiates rekeying automatically. In this case, our plugin
+         doesn't need to handle the message further.
+      4. If the expiry is hard, there is no separate notification to delete the SA.
+
+    c.Handling Hard Expiry:
+
+      When the plugin receives a hard expiry notification, it deletes the corresponding SA.
+This approach ensures that SA management remains consistent even without direct soft/hard expiry support in VPP.
+
+Limitations:
+===========
+
+1.The plugin does not support on-demand Security Association (SA) creation by installing trap policies.
+  This limitation arises because VPP cannot install a policy without a valid SA ID. Consequently, the
+  strongSwan configuration option "auto = route" cannot be supported.
+
+2.Given that VPP does not allow configuring the anti-replay window size (which remains fixed at 64),
+  the plugin does not take into account the replay-window size configured in strongSwan. However, it
+  does handle enabling or disabling the use-anti-replay flag in VPP.
+
+3.During negotiations between peers, there's a possibility that a peer sends an ESP packet with an old
+  Security Association (SA) (SPI X). Meanwhile, the strongSwan on the device under test (DUT) has updated
+  its inbound (INB) policy to point to a newly negotiated SA (SPI Y). This situation could lead to packet
+  drops in the DUT's inbound direction until the peer updates its policy to use the new SA (SPI Y).
+
+  To avoid this behavior, the plugin handles INB policy addition and deletion as part of SA addition and
+  deletion. As long as there is an SA in VPP, all INB packets matching that SA/SPI are accepted. Whenever
+  we receive a delete SA notification from the kernel, we remove the SA and its associated INB policy
+
+4. a.We do not handle inbound (INB) policy notifications from the kernel.
+   b.Forward (FWD) policies are not handled in the plugin because there is no use case for them.
+   c.The plugin intentionally avoids handling XFRM Policy notifications for BYPASS and DROP actions.
+     This design optimization ensures compatibility with daemons like strongSwan.
+   d.In NL (Netlink) policy notifications, we expect only one user template to be present.
+
+5. The plugin has been tested with AES-GCM and AES-CBC encryption algorithms only.
+
+6. In route/tunnel mode, VPP supports a maximum of 4 inbound (INB) SAs and 1 outbound (OUTB) SA
+   bound to the tunnel.
+
+7. In route/tunnel mode, if StrongSwan is configured such that more than one connection uses the same
+   tunnel endpoint, it leads to undefined behavior. This is because the tunnel (IPIP/IPsec) instance
+   is created based on tunnel endpoints and tunnel type. Since the endpoints and type of tunnel are
+   the same for both connections, it could happen that the second connection (tunnel creation) fails in VPP.
+
+Startup.conf section:
+====================
+
+linux-xfrm-nl{
+ # Following parameter enables route mode IPsec.
+ enable-route-mode-ipsec,
+ # Specifies Ipsec interface type "ipsec" or "ipip".
+ interface <"interface_type">,
+ # Set the RX buffer size to be used on the netlink socket.
+ nl-rx-buffer-size <>,
+ # Set the batch size - maximum netlink messages to process at one time.
+ nl-batch-size <>,
+ # Set the batch delay - how long to wait in ms between processing batches.
+ nl-batch-delay-ms <>
+}
