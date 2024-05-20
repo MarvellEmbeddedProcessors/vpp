@@ -11,11 +11,14 @@ vpp_plugin_find_library(dev-octeon OCTEON_ROC_LIB "libocteon-roc.a")
 
 if (NOT OCTEON_ROC_DIR)
   message("OCTEON ROC files not found - Marvell OCTEON device plugin disabled")
-  return()
 endif()
 
 if (NOT OCTEON_ROC_LIB)
   message("OCTEON ROC library (libocteon-roc.a) not found - Marvell OCTEON device plugin disabled")
+endif()
+
+if (NOT OCTEON_ROC_DIR OR NOT OCTEON_ROC_LIB)
+  include (dev_octeon_virtio.mk)
   return ()
 endif()
 
@@ -47,3 +50,4 @@ add_vpp_plugin(dev_octeon
   ${OCTEON_ROC_LIB}
 )
 
+include (dev_octeon_virtio.mk)

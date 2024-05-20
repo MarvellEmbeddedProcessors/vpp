@@ -48,12 +48,9 @@ endif
 DPDK_DRIVERS_DISABLED := baseband/\*,	\
 	bus/dpaa,							\
 	bus/ifpga,							\
-	common/cnxk,						\
 	compress/isal,						\
-	compress/octeontx,					\
 	compress/zlib,						\
 	crypto/ccp,							\
-	crypto/cnxk,						\
 	crypto/dpaa_sec,					\
 	crypto/openssl,						\
 	crypto/aesni_mb,						\
@@ -61,16 +58,11 @@ DPDK_DRIVERS_DISABLED := baseband/\*,	\
 	crypto/kasumi,						\
 	crypto/snow3g,						\
 	crypto/zuc,						\
-	event/\*,							\
 	mempool/dpaa,						\
-	mempool/cnxk,						\
-	net/af_packet,						\
 	net/bnx2x,							\
-	net/bonding,						\
-	net/cnxk,							\
 	net/ipn3ke,							\
 	net/liquidio,						\
-	net/pcap,							\
+	net/pcap,						\
 	net/pfe,							\
 	net/sfc,							\
 	net/softnic,						\
@@ -81,28 +73,11 @@ DPDK_DRIVERS_DISABLED := baseband/\*,	\
 DPDK_LIBS_DISABLED := acl,				\
 	bbdev,								\
 	bitratestats,						\
-	bpf,								\
-	cfgfile,							\
-	cnxk,							\
-	distributor,						\
-	efd,								\
-	fib,								\
-	flow_classify,						\
-	graph,								\
-	gro,								\
-	gso,								\
 	jobstats,							\
 	kni,								\
-	latencystats,						\
-	lpm,								\
+	table,								\
 	member,								\
-	node,								\
-	pipeline,							\
-	port,								\
-	power,								\
-	rawdev,								\
-	rib,								\
-	table
+	pipeline
 
 DPDK_MLX_CONFIG_FLAG :=
 

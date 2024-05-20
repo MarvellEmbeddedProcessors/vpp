@@ -1,0 +1,12 @@
+diff --git a/meson.build b/meson.build
+index 1dcad58..0564087 100644
+--- a/meson.build
++++ b/meson.build
+@@ -36,8 +36,6 @@ subdir('config')
+ if host_machine.cpu_family() == 'aarch64'
+ 	if DAO_BUILD_CONF.has('DAO_LIBDPDK_DEP')
+ 		subdir('lib')
+-		subdir('app')
+-		subdir('tests')
+ 	endif
+ endif
