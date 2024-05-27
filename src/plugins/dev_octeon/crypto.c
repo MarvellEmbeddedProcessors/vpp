@@ -911,7 +911,8 @@ oct_crypto_cpt_hmac_prep (u32 flags, u64 d_offs, u64 d_lens,
       /* Round  up  to 16 bytes alignment */
       if (PREDICT_FALSE (encr_data_len & 0xf))
 	{
-	  if (PREDICT_TRUE (cipher_type == ROC_SE_AES_CBC))
+	  if (PREDICT_TRUE (cipher_type == ROC_SE_AES_CBC) ||
+	      (cipher_type == ROC_SE_DES3_CBC))
 	    enc_dlen = PLT_ALIGN_CEIL (encr_data_len, 8) + encr_offset;
 	}
 
@@ -1140,6 +1141,43 @@ oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
     case VNET_CRYPTO_ALG_AES_192_CBC_SHA512_TAG32:
     case VNET_CRYPTO_ALG_AES_256_CBC_SHA512_TAG32:
       enc_type = ROC_SE_AES_CBC;
+      auth_type = ROC_SE_SHA2_SHA512;
+      digest_len = 32;
+      break;
+    case VNET_CRYPTO_ALG_AES_128_CTR_SHA1_TAG12:
+    case VNET_CRYPTO_ALG_AES_192_CTR_SHA1_TAG12:
+    case VNET_CRYPTO_ALG_AES_256_CTR_SHA1_TAG12:
+      enc_type = ROC_SE_AES_CTR;
+      auth_type = ROC_SE_SHA1_TYPE;
+      digest_len = 12;
+      break;
+    case VNET_CRYPTO_ALG_3DES_CBC_MD5_TAG12:
+      enc_type = ROC_SE_DES3_CBC;
+      auth_type = ROC_SE_MD5_TYPE;
+      digest_len = 12;
+      break;
+    case VNET_CRYPTO_ALG_3DES_CBC_SHA1_TAG12:
+      enc_type = ROC_SE_DES3_CBC;
+      auth_type = ROC_SE_SHA1_TYPE;
+      digest_len = 12;
+      break;
+    case VNET_CRYPTO_ALG_3DES_CBC_SHA224_TAG14:
+      enc_type = ROC_SE_DES3_CBC;
+      auth_type = ROC_SE_SHA2_SHA224;
+      digest_len = 14;
+      break;
+    case VNET_CRYPTO_ALG_3DES_CBC_SHA256_TAG16:
+      enc_type = ROC_SE_DES3_CBC;
+      auth_type = ROC_SE_SHA2_SHA256;
+      digest_len = 16;
+      break;
+    case VNET_CRYPTO_ALG_3DES_CBC_SHA384_TAG24:
+      enc_type = ROC_SE_DES3_CBC;
+      auth_type = ROC_SE_SHA2_SHA384;
+      digest_len = 24;
+      break;
+    case VNET_CRYPTO_ALG_3DES_CBC_SHA512_TAG32:
+      enc_type = ROC_SE_DES3_CBC;
       auth_type = ROC_SE_SHA2_SHA512;
       digest_len = 32;
       break;
