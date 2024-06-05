@@ -9,6 +9,8 @@
 #include <vnet/crypto/crypto.h>
 #include <vnet/ip/ip.h>
 
+#define OCT_MAX_N_CPT_DEV 2
+
 /* CRYPTO_ID, KEY_LENGTH_IN_BYTES, TAG_LEN, AAD_LEN */
 #define foreach_oct_crypto_aead_async_alg                                     \
   _ (AES_128_GCM, 16, 16, 8)                                                  \
@@ -121,9 +123,12 @@ typedef struct
 
 typedef struct
 {
+  oct_crypto_dev_t *crypto_dev[OCT_MAX_N_CPT_DEV];
   oct_crypto_key_t *keys[VNET_CRYPTO_ASYNC_OP_N_TYPES];
   oct_crypto_pending_queue_t *pend_q;
-} oct_crypto_t;
+  int n_cpt;
+  u8 started;
+} oct_crypto_main_t;
 
 void oct_crypto_key_del_handler (vlib_main_t *vm,
 				 vnet_crypto_key_index_t key_index);

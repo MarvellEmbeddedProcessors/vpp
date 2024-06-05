@@ -37,7 +37,8 @@ typedef enum
   OCT_DEVICE_TYPE_RVU_VF,
   OCT_DEVICE_TYPE_LBK_VF,
   OCT_DEVICE_TYPE_SDP_VF,
-  OCT_DEVICE_TYPE_CPT_VF,
+  OCT_DEVICE_TYPE_O10K_CPT_VF,
+  OCT_DEVICE_TYPE_O9K_CPT_VF,
 } __clib_packed oct_device_type_t;
 
 typedef struct
