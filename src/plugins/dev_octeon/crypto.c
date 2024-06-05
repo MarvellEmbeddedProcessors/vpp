@@ -11,8 +11,7 @@
 #include <base/roc_api.h>
 #include <common.h>
 
-oct_crypto_t oct_crypto;
-oct_crypto_dev_t oct_crypto_dev;
+oct_crypto_main_t oct_crypto_main;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -22,12 +21,12 @@ VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
 void
 oct_crypto_key_del_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   extern oct_plt_init_param_t oct_plt_init_param;
   oct_crypto_key_t *ckey;
 
-  vec_validate (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
-  ckey =
-    vec_elt_at_index (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
+  vec_validate (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
+  ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
   if (ckey->sess)
     {
       oct_plt_init_param.oct_plt_free (ckey->sess);
@@ -35,8 +34,7 @@ oct_crypto_key_del_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
       return;
     }
 
-  ckey =
-    vec_elt_at_index (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
+  ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
   if (ckey->sess)
     {
       oct_plt_init_param.oct_plt_free (ckey->sess);
@@ -48,16 +46,15 @@ oct_crypto_key_del_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 void
 oct_crypto_key_add_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   oct_crypto_key_t *ckey;
 
-  vec_validate (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
-  ckey =
-    vec_elt_at_index (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
+  vec_validate (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
+  ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
   ckey->sess = NULL;
 
-  vec_validate (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
-  ckey =
-    vec_elt_at_index (oct_crypto.keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
+  vec_validate (ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
+  ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
   ckey->sess = NULL;
 }
 
@@ -65,17 +62,23 @@ void
 oct_crypto_key_handler (vlib_main_t *vm, vnet_crypto_key_op_t kop,
 			vnet_crypto_key_index_t idx)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+
   if (kop == VNET_CRYPTO_KEY_OP_DEL)
     {
       oct_crypto_key_del_handler (vm, idx);
       return;
     }
   oct_crypto_key_add_handler (vm, idx);
+
+  ocm->started = 1;
 }
 
 static_always_inline oct_crypto_sess_t *
-oct_crypto_session_alloc (vlib_main_t *vm)
+oct_crypto_session_alloc (vlib_main_t *vm, u8 type)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[type];
   extern oct_plt_init_param_t oct_plt_init_param;
   oct_crypto_sess_t *addr = NULL;
   u32 size;
@@ -84,7 +87,7 @@ oct_crypto_session_alloc (vlib_main_t *vm)
   addr = oct_plt_init_param.oct_plt_zmalloc (size, CLIB_CACHE_LINE_BYTES);
   if (addr == NULL)
     {
-      log_err (oct_crypto_dev.dev, "Failed to allocate crypto session memory");
+      log_err (ocd->dev, "Failed to allocate crypto session memory");
       return NULL;
     }
 
@@ -100,15 +103,48 @@ oct_crypto_session_free (vlib_main_t *vm, oct_crypto_sess_t *sess)
   return;
 }
 
+#ifdef PLATFORM_OCTEON9
+static inline void
+oct_cpt_inst_submit (struct cpt_inst_s *inst, uint64_t lmtline,
+		     uint64_t io_addr)
+{
+  uint64_t lmt_status;
+
+  do
+    {
+      /* Copy CPT command to LMTLINE */
+      roc_lmt_mov64 ((void *) lmtline, inst);
+
+      /*
+       * Make sure compiler does not reorder memcpy and ldeor.
+       * LMTST transactions are always flushed from the write
+       * buffer immediately, a DMB is not required to push out
+       * LMTSTs.
+       */
+      asm volatile("dmb oshst" : : : "memory");
+      lmt_status = roc_lmt_submit_ldeor (io_addr);
+    }
+  while (lmt_status == 0);
+}
+#endif
+
 void
 oct_crypto_burst_submit (oct_crypto_dev_t *crypto_dev, struct cpt_inst_s *inst,
 			 u32 n_left)
 {
-  u64 *lmt_line[OCT_MAX_LMT_SZ];
-  u64 lmt_arg, core_lmt_id;
   u64 lmt_base;
   u64 io_addr;
   u32 count;
+
+#ifdef PLATFORM_OCTEON9
+  lmt_base = crypto_dev->lf.lmt_base;
+  io_addr = crypto_dev->lf.io_addr;
+
+  for (count = 0; count < n_left; count++)
+    oct_cpt_inst_submit (inst + count, lmt_base, io_addr);
+#else
+  u64 *lmt_line[OCT_MAX_LMT_SZ];
+  u64 lmt_arg, core_lmt_id;
 
   lmt_base = crypto_dev->lmtline.lmt_base;
   io_addr = crypto_dev->lmtline.io_addr;
@@ -167,6 +203,103 @@ oct_crypto_burst_submit (oct_crypto_dev_t *crypto_dev, struct cpt_inst_s *inst,
 
       roc_lmt_submit_steorl (lmt_arg, io_addr);
     }
+#endif
+}
+
+static_always_inline uint32_t
+oct_crypto_fill_sg_comp_from_iov (struct roc_sglist_comp *list, uint32_t i,
+				  struct roc_se_iov_ptr *from,
+				  uint32_t from_offset, uint32_t *psize,
+				  struct roc_se_buf_ptr *extra_buf,
+				  uint32_t extra_offset)
+{
+  uint32_t extra_len = extra_buf ? extra_buf->size : 0;
+  uint32_t size = *psize;
+  int32_t j;
+
+  for (j = 0; j < from->buf_cnt; j++)
+    {
+      struct roc_sglist_comp *to = &list[i >> 2];
+      uint32_t buf_sz = from->bufs[j].size;
+      void *vaddr = from->bufs[j].vaddr;
+      uint64_t e_vaddr;
+      uint32_t e_len;
+
+      if (PREDICT_FALSE (from_offset))
+	{
+	  if (from_offset >= buf_sz)
+	    {
+	      from_offset -= buf_sz;
+	      continue;
+	    }
+	  e_vaddr = (uint64_t) vaddr + from_offset;
+	  e_len = clib_min ((buf_sz - from_offset), size);
+	  from_offset = 0;
+	}
+      else
+	{
+	  e_vaddr = (uint64_t) vaddr;
+	  e_len = clib_min (buf_sz, size);
+	}
+
+      to->u.s.len[i % 4] = clib_host_to_net_u16 (e_len);
+      to->ptr[i % 4] = clib_host_to_net_u64 (e_vaddr);
+
+      if (extra_len && (e_len >= extra_offset))
+	{
+	  /* Break the data at given offset */
+	  uint32_t next_len = e_len - extra_offset;
+	  uint64_t next_vaddr = e_vaddr + extra_offset;
+
+	  if (!extra_offset)
+	    {
+	      i--;
+	    }
+	  else
+	    {
+	      e_len = extra_offset;
+	      size -= e_len;
+	      to->u.s.len[i % 4] = clib_host_to_net_u16 (e_len);
+	    }
+
+	  extra_len = clib_min (extra_len, size);
+	  /* Insert extra data ptr */
+	  if (extra_len)
+	    {
+	      i++;
+	      to = &list[i >> 2];
+	      to->u.s.len[i % 4] = clib_host_to_net_u16 (extra_len);
+	      to->ptr[i % 4] =
+		clib_host_to_net_u64 ((uint64_t) extra_buf->vaddr);
+	      size -= extra_len;
+	    }
+
+	  next_len = clib_min (next_len, size);
+	  /* insert the rest of the data */
+	  if (next_len)
+	    {
+	      i++;
+	      to = &list[i >> 2];
+	      to->u.s.len[i % 4] = clib_host_to_net_u16 (next_len);
+	      to->ptr[i % 4] = clib_host_to_net_u64 (next_vaddr);
+	      size -= next_len;
+	    }
+	  extra_len = 0;
+	}
+      else
+	{
+	  size -= e_len;
+	}
+      if (extra_offset)
+	extra_offset -= size;
+      i++;
+
+      if (PREDICT_FALSE (!size))
+	break;
+    }
+
+  *psize = size;
+  return (uint32_t) i;
 }
 
 static_always_inline u32
@@ -266,6 +399,28 @@ oct_crypto_fill_sg2_comp_from_iov (struct roc_sg2list_comp *list, u32 i,
   return (u32) i;
 }
 
+static_always_inline uint32_t
+oct_crypto_fill_sg_comp_from_buf (struct roc_sglist_comp *list, uint32_t i,
+				  struct roc_se_buf_ptr *from)
+{
+  struct roc_sglist_comp *to = &list[i >> 2];
+
+  to->u.s.len[i % 4] = clib_host_to_net_u16 (from->size);
+  to->ptr[i % 4] = clib_host_to_net_u64 ((uint64_t) from->vaddr);
+  return ++i;
+}
+
+static_always_inline uint32_t
+oct_crypto_fill_sg_comp (struct roc_sglist_comp *list, uint32_t i,
+			 uint64_t dma_addr, uint32_t size)
+{
+  struct roc_sglist_comp *to = &list[i >> 2];
+
+  to->u.s.len[i % 4] = clib_host_to_net_u16 (size);
+  to->ptr[i % 4] = clib_host_to_net_u64 (dma_addr);
+  return ++i;
+}
+
 static_always_inline u32
 oct_crypto_fill_sg2_comp (struct roc_sg2list_comp *list, u32 index,
 			  u64 dma_addr, u32 size)
@@ -290,7 +445,190 @@ oct_crypto_fill_sg2_comp_from_buf (struct roc_sg2list_comp *list, u32 index,
   return ++index;
 }
 
-static_always_inline int
+static_always_inline int __attribute__ ((unused))
+oct_crypto_sg_inst_prep (struct roc_se_fc_params *params,
+			 struct cpt_inst_s *inst, uint64_t offset_ctrl,
+			 const uint8_t *iv_s, int iv_len, uint8_t pack_iv,
+			 uint8_t pdcp_alg_type, int32_t inputlen,
+			 int32_t outputlen, uint32_t passthrough_len,
+			 uint32_t req_flags, int pdcp_flag, int decrypt)
+{
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[decrypt];
+  struct roc_sglist_comp *gather_comp, *scatter_comp;
+  void *m_vaddr = params->meta_buf.vaddr;
+  struct roc_se_buf_ptr *aad_buf = NULL;
+  uint32_t mac_len = 0, aad_len = 0;
+  struct roc_se_ctx *se_ctx;
+  uint32_t i, g_size_bytes;
+  uint64_t *offset_vaddr;
+  uint32_t s_size_bytes;
+  uint8_t *in_buffer;
+  uint32_t size;
+  uint8_t *iv_d;
+  int ret = 0;
+
+  se_ctx = params->ctx;
+  mac_len = se_ctx->mac_len;
+
+  if (PREDICT_FALSE (req_flags & ROC_SE_VALID_AAD_BUF))
+    {
+      /* We don't support both AAD and auth data separately */
+      aad_len = params->aad_buf.size;
+      aad_buf = &params->aad_buf;
+    }
+
+  /* save space for iv */
+  offset_vaddr = m_vaddr;
+
+  m_vaddr =
+    (uint8_t *) m_vaddr + ROC_SE_OFF_CTRL_LEN + PLT_ALIGN_CEIL (iv_len, 8);
+
+  inst->w4.s.opcode_major |= (uint64_t) ROC_DMA_MODE_SG;
+
+  /* iv offset is 0 */
+  *offset_vaddr = offset_ctrl;
+
+  iv_d = ((uint8_t *) offset_vaddr + ROC_SE_OFF_CTRL_LEN);
+
+  if (PREDICT_TRUE (iv_len))
+    memcpy (iv_d, iv_s, iv_len);
+
+  /* DPTR has SG list */
+
+  /* TODO Add error check if space will be sufficient */
+  gather_comp = (struct roc_sglist_comp *) ((uint8_t *) m_vaddr + 8);
+
+  /*
+   * Input Gather List
+   */
+  i = 0;
+
+  /* Offset control word followed by iv */
+
+  i = oct_crypto_fill_sg_comp (gather_comp, i, (uint64_t) offset_vaddr,
+			       ROC_SE_OFF_CTRL_LEN + iv_len);
+
+  /* Add input data */
+  if (decrypt && (req_flags & ROC_SE_VALID_MAC_BUF))
+    {
+      size = inputlen - iv_len - mac_len;
+
+      if (PREDICT_TRUE (size))
+	{
+	  uint32_t aad_offset = aad_len ? passthrough_len : 0;
+	  i = oct_crypto_fill_sg_comp_from_iov (
+	    gather_comp, i, params->src_iov, 0, &size, aad_buf, aad_offset);
+	  if (PREDICT_FALSE (size))
+	    {
+	      log_err (ocd->dev, "Insufficient buffer space, size %d needed",
+		       size);
+	      return -1;
+	    }
+	}
+
+      if (mac_len)
+	i =
+	  oct_crypto_fill_sg_comp_from_buf (gather_comp, i, &params->mac_buf);
+    }
+  else
+    {
+      /* input data */
+      size = inputlen - iv_len;
+      if (size)
+	{
+	  uint32_t aad_offset = aad_len ? passthrough_len : 0;
+	  i = oct_crypto_fill_sg_comp_from_iov (
+	    gather_comp, i, params->src_iov, 0, &size, aad_buf, aad_offset);
+	  if (PREDICT_FALSE (size))
+	    {
+	      log_err (ocd->dev, "Insufficient buffer space, size %d needed",
+		       size);
+	      return -1;
+	    }
+	}
+    }
+
+  in_buffer = m_vaddr;
+  ((uint16_t *) in_buffer)[0] = 0;
+  ((uint16_t *) in_buffer)[1] = 0;
+  ((uint16_t *) in_buffer)[2] = clib_host_to_net_u16 (i);
+
+  g_size_bytes = ((i + 3) / 4) * sizeof (struct roc_sglist_comp);
+  /*
+   * Output Scatter List
+   */
+
+  i = 0;
+  scatter_comp =
+    (struct roc_sglist_comp *) ((uint8_t *) gather_comp + g_size_bytes);
+
+  i = oct_crypto_fill_sg_comp (
+    scatter_comp, i, (uint64_t) offset_vaddr + ROC_SE_OFF_CTRL_LEN, iv_len);
+
+  /* Add output data */
+  if ((!decrypt) && (req_flags & ROC_SE_VALID_MAC_BUF))
+    {
+      size = outputlen - iv_len - mac_len;
+      if (size)
+	{
+
+	  uint32_t aad_offset = aad_len ? passthrough_len : 0;
+
+	  i = oct_crypto_fill_sg_comp_from_iov (
+	    scatter_comp, i, params->dst_iov, 0, &size, aad_buf, aad_offset);
+	  if (PREDICT_FALSE (size))
+	    {
+	      log_err (ocd->dev, "Insufficient buffer space, size %d needed",
+		       size);
+	      return -1;
+	    }
+	}
+
+      /* mac data */
+      if (mac_len)
+	i =
+	  oct_crypto_fill_sg_comp_from_buf (scatter_comp, i, &params->mac_buf);
+    }
+  else
+    {
+      /* Output including mac */
+      size = outputlen - iv_len;
+
+      if (size)
+	{
+	  uint32_t aad_offset = aad_len ? passthrough_len : 0;
+
+	  i = oct_crypto_fill_sg_comp_from_iov (
+	    scatter_comp, i, params->dst_iov, 0, &size, aad_buf, aad_offset);
+
+	  if (PREDICT_FALSE (size))
+	    {
+	      log_err (ocd->dev, "Insufficient buffer space, size %d needed",
+		       size);
+	      return -1;
+	    }
+	}
+    }
+  ((uint16_t *) in_buffer)[3] = clib_host_to_net_u16 (i);
+  s_size_bytes = ((i + 3) / 4) * sizeof (struct roc_sglist_comp);
+
+  size = g_size_bytes + s_size_bytes + ROC_SG_LIST_HDR_SIZE;
+
+  /* This is DPTR len in case of SG mode */
+  inst->w4.s.dlen = size;
+
+  if (PREDICT_FALSE (size > ROC_SG_MAX_DLEN_SIZE))
+    {
+      log_err (ocd->dev, "Exceeds max supported components. Reduce segments");
+      ret = -1;
+    }
+
+  inst->dptr = (uint64_t) in_buffer;
+  return ret;
+}
+
+static_always_inline int __attribute__ ((unused))
 oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 			  struct cpt_inst_s *inst, u64 offset_ctrl,
 			  const u8 *iv_s, int iv_len, u8 pack_iv,
@@ -298,6 +636,8 @@ oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 			  u32 passthrough_len, u32 req_flags, int pdcp_flag,
 			  int decrypt)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[decrypt];
   u32 mac_len = 0, aad_len = 0, size, index, g_size_bytes;
   struct roc_sg2list_comp *gather_comp, *scatter_comp;
   void *m_vaddr = params->meta_buf.vaddr;
@@ -366,7 +706,7 @@ oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 
 	  if (PREDICT_FALSE (size))
 	    {
-	      log_err (oct_crypto_dev.dev,
+	      log_err (ocd->dev,
 		       "Insufficient buffer"
 		       " space, size %d needed",
 		       size);
@@ -392,7 +732,7 @@ oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 						     aad_buf, aad_offset);
 	  if (PREDICT_FALSE (size))
 	    {
-	      log_err (oct_crypto_dev.dev,
+	      log_err (ocd->dev,
 		       "Insufficient buffer space,"
 		       " size %d needed",
 		       size);
@@ -429,7 +769,7 @@ oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 						     aad_buf, aad_offset);
 	  if (PREDICT_FALSE (size))
 	    {
-	      log_err (oct_crypto_dev.dev,
+	      log_err (ocd->dev,
 		       "Insufficient buffer space,"
 		       " size %d needed",
 		       size);
@@ -456,7 +796,7 @@ oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 
 	  if (PREDICT_FALSE (size))
 	    {
-	      log_err (oct_crypto_dev.dev,
+	      log_err (ocd->dev,
 		       "Insufficient buffer space,"
 		       " size %d needed",
 		       size);
@@ -478,8 +818,7 @@ oct_crypto_sg2_inst_prep (struct roc_se_fc_params *params,
 
   if (PREDICT_FALSE ((scatter_sz >> 4) || (gather_sz >> 4)))
     {
-      log_err (oct_crypto_dev.dev,
-	       "Exceeds max supported components. Reduce segments");
+      log_err (ocd->dev, "Exceeds max supported components. Reduce segments");
       ret = -1;
     }
 
@@ -491,6 +830,8 @@ oct_crypto_cpt_hmac_prep (u32 flags, u64 d_offs, u64 d_lens,
 			  struct roc_se_fc_params *fc_params,
 			  struct cpt_inst_s *inst, u8 is_decrypt)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[is_decrypt];
   u32 encr_data_len, auth_data_len, aad_len = 0;
   i32 inputlen, outputlen, enc_dlen, auth_dlen;
   u32 encr_offset, auth_offset, iv_offset = 0;
@@ -599,10 +940,9 @@ oct_crypto_cpt_hmac_prep (u32 flags, u64 d_offs, u64 d_lens,
   if (PREDICT_FALSE ((encr_offset >> 16) || (iv_offset >> 8) ||
 		     (auth_offset >> 8)))
     {
-      log_err (oct_crypto_dev.dev, "Offset not supported");
-      log_err (oct_crypto_dev.dev,
-	       "enc_offset: %d, iv_offset : %d, auth_offset: %d", encr_offset,
-	       iv_offset, auth_offset);
+      log_err (ocd->dev, "Offset not supported");
+      log_err (ocd->dev, "enc_offset: %d, iv_offset : %d, auth_offset: %d",
+	       encr_offset, iv_offset, auth_offset);
       return -1;
     }
 
@@ -613,13 +953,19 @@ oct_crypto_cpt_hmac_prep (u32 flags, u64 d_offs, u64 d_lens,
 
   inst->w4.u64 = cpt_inst_w4.u64;
 
+#ifdef PLATFORM_OCTEON9
+  ret = oct_crypto_sg_inst_prep (fc_params, inst, offset_ctrl, src, iv_len, 0,
+				 0, inputlen, outputlen, passthrough_len,
+				 flags, 0, is_decrypt);
+#else
   ret = oct_crypto_sg2_inst_prep (fc_params, inst, offset_ctrl, src, iv_len, 0,
 				  0, inputlen, outputlen, passthrough_len,
 				  flags, 0, is_decrypt);
+#endif
 
   if (PREDICT_FALSE (ret))
     {
-      log_err (oct_crypto_dev.dev, "sg prep failed");
+      log_err (ocd->dev, "sg prep failed");
       return -1;
     }
 
@@ -737,9 +1083,10 @@ oct_cpt_inst_w7_get (oct_crypto_sess_t *sess, struct roc_cpt *roc_cpt)
 static_always_inline void
 oct_map_keyindex_to_session (oct_crypto_sess_t *sess, u32 key_index, u8 type)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   oct_crypto_key_t *ckey;
 
-  ckey = vec_elt_at_index (oct_crypto.keys[type], key_index);
+  ckey = vec_elt_at_index (ocm->keys[type], key_index);
 
   ckey->sess = sess;
 }
@@ -748,6 +1095,8 @@ static_always_inline i32
 oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
 				u32 key_index, u8 type)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[type];
   vnet_crypto_key_t *crypto_key, *auth_key;
   roc_se_cipher_type enc_type = 0;
   roc_se_auth_type auth_type = 0;
@@ -795,7 +1144,7 @@ oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
       digest_len = 32;
       break;
     default:
-      log_err (oct_crypto_dev.dev,
+      log_err (ocd->dev,
 	       "Crypto: Undefined link algo %u specified. Key index %u",
 	       key->async_alg, key_index);
       return -1;
@@ -814,8 +1163,8 @@ oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
 			    vec_len (crypto_key->data));
   if (rv)
     {
-      log_err (oct_crypto_dev.dev,
-	       "Error in setting cipher key for enc type %u", enc_type);
+      log_err (ocd->dev, "Error in setting cipher key for enc type %u",
+	       enc_type);
       return -1;
     }
 
@@ -825,8 +1174,8 @@ oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
 			    vec_len (auth_key->data), digest_len);
   if (rv)
     {
-      log_err (oct_crypto_dev.dev,
-	       "Error in setting auth key for auth type %u", auth_type);
+      log_err (ocd->dev, "Error in setting auth key for auth type %u",
+	       auth_type);
       return -1;
     }
 
@@ -844,6 +1193,8 @@ static_always_inline i32
 oct_crypto_aead_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
 				u32 key_index, u8 type)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[type];
   vnet_crypto_key_t *key = vnet_crypto_get_key (key_index);
   roc_se_cipher_type enc_type = 0;
   roc_se_auth_type auth_type = 0;
@@ -864,7 +1215,7 @@ oct_crypto_aead_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
       digest_len = 16;
       break;
     default:
-      log_err (oct_crypto_dev.dev,
+      log_err (ocd->dev,
 	       "Crypto: Undefined cipher algo %u specified. Key index %u",
 	       key->async_alg, key_index);
       return -1;
@@ -874,16 +1225,16 @@ oct_crypto_aead_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
 			    vec_len (key->data));
   if (rv)
     {
-      log_err (oct_crypto_dev.dev,
-	       "Error in setting cipher key for enc type %u", enc_type);
+      log_err (ocd->dev, "Error in setting cipher key for enc type %u",
+	       enc_type);
       return -1;
     }
 
   rv = roc_se_auth_key_set (&sess->cpt_ctx, auth_type, NULL, 0, digest_len);
   if (rv)
     {
-      log_err (oct_crypto_dev.dev,
-	       "Error in setting auth key for auth type %u", auth_type);
+      log_err (ocd->dev, "Error in setting auth key for auth type %u",
+	       auth_type);
       return -1;
     }
 
@@ -896,13 +1247,15 @@ i32
 oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
 			   int op_type)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_dev_t *ocd = ocm->crypto_dev[op_type];
   oct_crypto_sess_t *session;
   vnet_crypto_key_t *key;
   i32 rv = 0;
 
   key = vnet_crypto_get_key (key_index);
 
-  session = oct_crypto_session_alloc (vm);
+  session = oct_crypto_session_alloc (vm, op_type);
   if (session == NULL)
     return -1;
 
@@ -917,7 +1270,7 @@ oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
       return -1;
     }
 
-  session->crypto_dev = &oct_crypto_dev;
+  session->crypto_dev = ocd;
 
   session->cpt_inst_w7 =
     oct_cpt_inst_w7_get (session, session->crypto_dev->roc_cpt);
@@ -941,6 +1294,7 @@ int
 oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 			    const u8 is_aead, u8 aad_len, const u8 type)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   struct cpt_inst_s inst[VNET_CRYPTO_FRAME_SIZE];
   u32 i, enq_tail, enc_auth_len, buffer_index;
   u32 crypto_start_offset, integ_start_offset;
@@ -958,7 +1312,7 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
   /* GCM packets having 8 bytes of aad and 8 bytes of iv */
   u8 aad_iv = 8 + 8;
 
-  pend_q = &oct_crypto.pend_q[vlib_get_thread_index ()];
+  pend_q = &ocm->pend_q[vlib_get_thread_index ()];
 
   enq_tail = pend_q->enq_tail;
 
@@ -969,7 +1323,7 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
     {
       elts = &frame->elts[i];
       buffer_index = frame->buffer_indices[i];
-      key = vec_elt_at_index (oct_crypto.keys[type], elts->key_index);
+      key = vec_elt_at_index (ocm->keys[type], elts->key_index);
 
       if (!key->sess)
 	{
@@ -1111,6 +1465,7 @@ vnet_crypto_async_frame_t *
 oct_crypto_frame_dequeue (vlib_main_t *vm, u32 *nb_elts_processed,
 			  u32 *enqueue_thread_idx)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   u32 deq_head, status = VNET_CRYPTO_OP_STATUS_COMPLETED;
   vnet_crypto_async_frame_elt_t *fe = NULL;
   oct_crypto_inflight_req_t *infl_req;
@@ -1119,7 +1474,7 @@ oct_crypto_frame_dequeue (vlib_main_t *vm, u32 *nb_elts_processed,
   volatile union cpt_res_s *res;
   int i;
 
-  pend_q = &oct_crypto.pend_q[vlib_get_thread_index ()];
+  pend_q = &ocm->pend_q[vlib_get_thread_index ()];
 
   if (!pend_q->n_crypto_inflight)
     return NULL;
@@ -1206,6 +1561,7 @@ oct_init_crypto_engine_handlers (vlib_main_t *vm, vnet_dev_t *dev)
 int
 oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   extern oct_plt_init_param_t oct_plt_init_param;
   vnet_device_main_t *vdm = &vnet_device_main;
   oct_crypto_inflight_req_t *infl_req_queue;
@@ -1215,10 +1571,10 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
   num_worker_cores =
     vdm->last_worker_thread_index - vdm->first_worker_thread_index + 1;
 
-  oct_crypto.pend_q = oct_plt_init_param.oct_plt_zmalloc (
+  ocm->pend_q = oct_plt_init_param.oct_plt_zmalloc (
     num_worker_cores * sizeof (oct_crypto_pending_queue_t),
     CLIB_CACHE_LINE_BYTES);
-  if (oct_crypto.pend_q == NULL)
+  if (ocm->pend_q == NULL)
     {
       log_err (dev, "Failed to allocate memory for crypto pending queue");
       return -1;
@@ -1226,22 +1582,22 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 
   for (i = 0; i <= num_worker_cores; ++i)
     {
-      oct_crypto.pend_q[i].n_desc = OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT;
+      ocm->pend_q[i].n_desc = OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT;
 
-      oct_crypto.pend_q[i].req_queue = oct_plt_init_param.oct_plt_zmalloc (
+      ocm->pend_q[i].req_queue = oct_plt_init_param.oct_plt_zmalloc (
 	OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT *
 	  sizeof (oct_crypto_inflight_req_t),
 	CLIB_CACHE_LINE_BYTES);
-      if (oct_crypto.pend_q[i].req_queue == NULL)
+      if (ocm->pend_q[i].req_queue == NULL)
 	{
 	  log_err (dev,
 		   "Failed to allocate memory for crypto inflight request");
 	  goto free;
 	}
 
-      for (j = 0; j <= oct_crypto.pend_q[i].n_desc; ++j)
+      for (j = 0; j <= ocm->pend_q[i].n_desc; ++j)
 	{
-	  infl_req_queue = &oct_crypto.pend_q[i].req_queue[j];
+	  infl_req_queue = &ocm->pend_q[i].req_queue[j];
 
 	  infl_req_queue->sg_data = oct_plt_init_param.oct_plt_zmalloc (
 	    OCT_SCATTER_GATHER_BUFFER_SIZE * VNET_CRYPTO_FRAME_SIZE,
@@ -1257,20 +1613,20 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 free:
   for (; i >= 0; i--)
     {
-      if (oct_crypto.pend_q[i].req_queue == NULL)
+      if (ocm->pend_q[i].req_queue == NULL)
 	continue;
       for (; j >= 0; j--)
 	{
-	  infl_req_queue = &oct_crypto.pend_q[i].req_queue[j];
+	  infl_req_queue = &ocm->pend_q[i].req_queue[j];
 
 	  if (infl_req_queue->sg_data == NULL)
 	    continue;
 
 	  oct_plt_init_param.oct_plt_free (infl_req_queue->sg_data);
 	}
-      oct_plt_init_param.oct_plt_free (oct_crypto.pend_q[i].req_queue);
+      oct_plt_init_param.oct_plt_free (ocm->pend_q[i].req_queue);
     }
-  oct_plt_init_param.oct_plt_free (oct_crypto.pend_q);
+  oct_plt_init_param.oct_plt_free (ocm->pend_q);
 
   return -1;
 }

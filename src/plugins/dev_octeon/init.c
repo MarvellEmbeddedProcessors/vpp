@@ -16,6 +16,7 @@
 #include <common.h>
 
 struct roc_model oct_model;
+extern oct_crypto_main_t oct_crypto_main;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -55,7 +56,9 @@ static struct
   _ (0xa064, RVU_VF, "Marvell Octeon Resource Virtualization Unit VF"),
   _ (0xa0f8, LBK_VF, "Marvell Octeon Loopback Unit VF"),
   _ (0xa0f7, SDP_VF, "Marvell Octeon System DPI Packet Interface Unit VF"),
-  _ (0xa0f3, CPT_VF, "Marvell Octeon Cryptographic Accelerator Unit VF"),
+  _ (0xa0f3, O10K_CPT_VF,
+     "Marvell Octeon-10 Cryptographic Accelerator Unit VF"),
+  _ (0xa0fe, O9K_CPT_VF, "Marvell Octeon-9 Cryptographic Accelerator Unit VF"),
 #undef _
 };
 
@@ -187,10 +190,12 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 }
 
 static int
-oct_conf_cpt (vlib_main_t *vm, vnet_dev_t *dev, struct roc_cpt *roc_cpt,
+oct_conf_cpt (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd,
 	      int nb_lf)
 {
+  struct roc_cpt *roc_cpt = ocd->roc_cpt;
   int rrv;
+
   if ((rrv = roc_cpt_eng_grp_add (roc_cpt, CPT_ENG_TYPE_SE)) < 0)
     {
       log_err (dev, "Could not add CPT SE engines");
@@ -221,15 +226,15 @@ oct_conf_cpt (vlib_main_t *vm, vnet_dev_t *dev, struct roc_cpt *roc_cpt,
 }
 
 static vnet_dev_rv_t
-oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, struct roc_cpt *roc_cpt)
+oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd)
 {
-  extern oct_crypto_dev_t oct_crypto_dev;
+  struct roc_cpt *roc_cpt = ocd->roc_cpt;
   struct roc_cpt_lmtline *cpt_lmtline;
   struct roc_cpt_lf *cpt_lf;
   int rrv;
 
-  cpt_lf = &oct_crypto_dev.lf;
-  cpt_lmtline = &oct_crypto_dev.lmtline;
+  cpt_lf = &ocd->lf;
+  cpt_lmtline = &ocd->lmtline;
 
   cpt_lf->nb_desc = 8192;
   cpt_lf->lf_id = 0;
@@ -247,29 +252,43 @@ oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, struct roc_cpt *roc_cpt)
 static vnet_dev_rv_t
 oct_init_cpt (vlib_main_t *vm, vnet_dev_t *dev)
 {
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   extern oct_plt_init_param_t oct_plt_init_param;
   oct_device_t *cd = vnet_dev_get_data (dev);
-  extern oct_crypto_dev_t oct_crypto_dev;
+  oct_crypto_dev_t *ocd = NULL;
   int rrv;
 
-  oct_crypto_dev.roc_cpt = oct_plt_init_param.oct_plt_zmalloc (
-    sizeof (struct roc_cpt), CLIB_CACHE_LINE_BYTES);
-  oct_crypto_dev.roc_cpt->pci_dev = &cd->plt_pci_dev;
+  if (ocm->n_cpt == OCT_MAX_N_CPT_DEV || ocm->started)
+    return VNET_DEV_ERR_NOT_SUPPORTED;
 
-  oct_crypto_dev.dev = dev;
+  ocd = oct_plt_init_param.oct_plt_zmalloc (sizeof (oct_crypto_dev_t),
+					    CLIB_CACHE_LINE_BYTES);
 
-  if ((rrv = roc_cpt_dev_init (oct_crypto_dev.roc_cpt)))
+  ocd->roc_cpt = oct_plt_init_param.oct_plt_zmalloc (sizeof (struct roc_cpt),
+						     CLIB_CACHE_LINE_BYTES);
+  ocd->roc_cpt->pci_dev = &cd->plt_pci_dev;
+
+  ocd->dev = dev;
+
+  if ((rrv = roc_cpt_dev_init (ocd->roc_cpt)))
     return cnx_return_roc_err (dev, rrv, "roc_cpt_dev_init");
 
-  if ((rrv = oct_conf_cpt (vm, dev, oct_crypto_dev.roc_cpt, 1)))
+  if ((rrv = oct_conf_cpt (vm, dev, ocd, 1)))
     return rrv;
 
-  if ((rrv = oct_conf_cpt_queue (vm, dev, oct_crypto_dev.roc_cpt)))
+  if ((rrv = oct_conf_cpt_queue (vm, dev, ocd)))
     return rrv;
 
   oct_conf_sw_queue (vm, dev);
 
   oct_init_crypto_engine_handlers (vm, dev);
+
+  if (!ocm->n_cpt)
+    ocm->crypto_dev[0] = ocd;
+
+  ocm->crypto_dev[1] = ocd;
+
+  ocm->n_cpt++;
 
   return VNET_DEV_OK;
 }
@@ -325,7 +344,8 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
     case OCT_DEVICE_TYPE_SDP_VF:
       return oct_init_nix (vm, dev);
 
-    case OCT_DEVICE_TYPE_CPT_VF:
+    case OCT_DEVICE_TYPE_O10K_CPT_VF:
+    case OCT_DEVICE_TYPE_O9K_CPT_VF:
       return oct_init_cpt (vm, dev);
 
     default:
