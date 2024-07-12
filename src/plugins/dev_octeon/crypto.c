@@ -1599,18 +1599,14 @@ oct_init_crypto_engine_handlers (vlib_main_t *vm, vnet_dev_t *dev)
 int
 oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 {
+  vlib_thread_main_t *tm = vlib_get_thread_main ();
   oct_crypto_main_t *ocm = &oct_crypto_main;
   extern oct_plt_init_param_t oct_plt_init_param;
-  vnet_device_main_t *vdm = &vnet_device_main;
   oct_crypto_inflight_req_t *infl_req_queue;
-  u8 num_worker_cores;
   int i, j = 0;
 
-  num_worker_cores =
-    vdm->last_worker_thread_index - vdm->first_worker_thread_index + 1;
-
   ocm->pend_q = oct_plt_init_param.oct_plt_zmalloc (
-    num_worker_cores * sizeof (oct_crypto_pending_queue_t),
+    tm->n_vlib_mains * sizeof (oct_crypto_pending_queue_t),
     CLIB_CACHE_LINE_BYTES);
   if (ocm->pend_q == NULL)
     {
@@ -1618,7 +1614,7 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
       return -1;
     }
 
-  for (i = 0; i <= num_worker_cores; ++i)
+  for (i = 0; i < tm->n_vlib_mains; ++i)
     {
       ocm->pend_q[i].n_desc = OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT;
 
