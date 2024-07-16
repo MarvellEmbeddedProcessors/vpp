@@ -18,28 +18,122 @@ VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .subclass_name = "init",
 };
 
+static_always_inline void
+oct_map_keyindex_to_session (oct_crypto_sess_t *sess, u32 key_index, u8 type)
+{
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_key_t *ckey;
+
+  ckey = vec_elt_at_index (ocm->keys[type], key_index);
+
+  ckey->sess = sess;
+  sess->key_index = key_index;
+}
+
+static_always_inline oct_crypto_sess_t *
+oct_crypto_session_alloc (vlib_main_t *vm, u8 type)
+{
+  extern oct_plt_init_param_t oct_plt_init_param;
+  oct_crypto_sess_t *addr = NULL;
+  oct_crypto_main_t *ocm;
+  oct_crypto_dev_t *ocd;
+  u32 size;
+
+  ocm = &oct_crypto_main;
+  ocd = ocm->crypto_dev[type];
+
+  size = sizeof (oct_crypto_sess_t);
+
+  addr = oct_plt_init_param.oct_plt_zmalloc (size, CLIB_CACHE_LINE_BYTES);
+  if (addr == NULL)
+    {
+      log_err (ocd->dev, "Failed to allocate crypto session memory");
+      return NULL;
+    }
+
+  return addr;
+}
+
+static_always_inline i32
+oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
+			   int op_type)
+{
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_sess_t *session;
+  vnet_crypto_key_t *key;
+  oct_crypto_key_t *ckey;
+
+  key = vnet_crypto_get_key (key_index);
+
+  if (key->type == VNET_CRYPTO_KEY_TYPE_LINK)
+    {
+      /*
+       * Read crypto or integ key session. And map link key index to same.
+       */
+      if (key->index_crypto != UINT32_MAX)
+	{
+	  ckey = vec_elt_at_index (ocm->keys[op_type], key->index_crypto);
+	  session = ckey->sess;
+	}
+      else if (key->index_integ != UINT32_MAX)
+	{
+	  ckey = vec_elt_at_index (ocm->keys[op_type], key->index_integ);
+	  session = ckey->sess;
+	}
+      else
+	return -1;
+    }
+  else
+    {
+      session = oct_crypto_session_alloc (vm, op_type);
+      if (session == NULL)
+	return -1;
+    }
+
+  oct_map_keyindex_to_session (session, key_index, op_type);
+  return 0;
+}
+
 void
 oct_crypto_key_del_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 {
-  oct_crypto_main_t *ocm = &oct_crypto_main;
   extern oct_plt_init_param_t oct_plt_init_param;
+  oct_crypto_main_t *ocm = &oct_crypto_main;
+  oct_crypto_key_t *ckey_linked;
   oct_crypto_key_t *ckey;
 
   vec_validate (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
+
   ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
   if (ckey->sess)
     {
+      /*
+       * If in case link algo is pointing to same sesison, reset the pointer.
+       */
+      if (ckey->sess->key_index != key_index)
+	{
+	  ckey_linked = vec_elt_at_index (
+	    ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], ckey->sess->key_index);
+	  ckey_linked->sess = NULL;
+	}
       oct_plt_init_param.oct_plt_free (ckey->sess);
       ckey->sess = NULL;
-      return;
     }
 
   ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
   if (ckey->sess)
     {
+      /*
+       * If in case link algo is pointing to same sesison, reset the pointer.
+       */
+      if (ckey->sess->key_index != key_index)
+	{
+	  ckey_linked = vec_elt_at_index (
+	    ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], ckey->sess->key_index);
+	  ckey_linked->sess = NULL;
+	}
       oct_plt_init_param.oct_plt_free (ckey->sess);
       ckey->sess = NULL;
-      return;
     }
 }
 
@@ -51,11 +145,27 @@ oct_crypto_key_add_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 
   vec_validate (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
   ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], key_index);
-  ckey->sess = NULL;
+  if (ckey->sess == NULL)
+    {
+      if (oct_crypto_session_create (vm, key_index,
+				     VNET_CRYPTO_OP_TYPE_ENCRYPT))
+	{
+	  clib_warning ("Unable to create crypto session");
+	  return;
+	}
+    }
 
   vec_validate (ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
   ckey = vec_elt_at_index (ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], key_index);
-  ckey->sess = NULL;
+  if (ckey->sess == NULL)
+    {
+      if (oct_crypto_session_create (vm, key_index,
+				     VNET_CRYPTO_OP_TYPE_DECRYPT))
+	{
+	  clib_warning ("Unable to create crypto session");
+	  return;
+	}
+    }
 }
 
 void
@@ -72,26 +182,6 @@ oct_crypto_key_handler (vlib_main_t *vm, vnet_crypto_key_op_t kop,
   oct_crypto_key_add_handler (vm, idx);
 
   ocm->started = 1;
-}
-
-static_always_inline oct_crypto_sess_t *
-oct_crypto_session_alloc (vlib_main_t *vm, u8 type)
-{
-  oct_crypto_main_t *ocm = &oct_crypto_main;
-  oct_crypto_dev_t *ocd = ocm->crypto_dev[type];
-  extern oct_plt_init_param_t oct_plt_init_param;
-  oct_crypto_sess_t *addr = NULL;
-  u32 size;
-
-  size = sizeof (oct_crypto_sess_t);
-  addr = oct_plt_init_param.oct_plt_zmalloc (size, CLIB_CACHE_LINE_BYTES);
-  if (addr == NULL)
-    {
-      log_err (ocd->dev, "Failed to allocate crypto session memory");
-      return NULL;
-    }
-
-  return addr;
 }
 
 static_always_inline void
@@ -128,7 +218,7 @@ oct_cpt_inst_submit (struct cpt_inst_s *inst, uint64_t lmtline,
 }
 #endif
 
-void
+static_always_inline void
 oct_crypto_burst_submit (oct_crypto_dev_t *crypto_dev, struct cpt_inst_s *inst,
 			 u32 n_left)
 {
@@ -1081,17 +1171,6 @@ oct_cpt_inst_w7_get (oct_crypto_sess_t *sess, struct roc_cpt *roc_cpt)
   return inst_w7.u64;
 }
 
-static_always_inline void
-oct_map_keyindex_to_session (oct_crypto_sess_t *sess, u32 key_index, u8 type)
-{
-  oct_crypto_main_t *ocm = &oct_crypto_main;
-  oct_crypto_key_t *ckey;
-
-  ckey = vec_elt_at_index (ocm->keys[type], key_index);
-
-  ckey->sess = sess;
-}
-
 static_always_inline i32
 oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
 				u32 key_index, u8 type)
@@ -1217,13 +1296,6 @@ oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
       return -1;
     }
 
-  oct_map_keyindex_to_session (sess, key_index, type);
-  /*
-   * Map session to crypto key index also. This entry can be referred
-   * while deleting key
-   */
-  oct_map_keyindex_to_session (sess, key->index_crypto, type);
-
   return 0;
 }
 
@@ -1276,26 +1348,19 @@ oct_crypto_aead_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
       return -1;
     }
 
-  oct_map_keyindex_to_session (sess, key_index, type);
-
   return 0;
 }
 
-i32
-oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
-			   int op_type)
+static_always_inline i32
+oct_crypto_session_init (vlib_main_t *vm, oct_crypto_sess_t *session,
+			 vnet_crypto_key_index_t key_index, int op_type)
 {
   oct_crypto_main_t *ocm = &oct_crypto_main;
   oct_crypto_dev_t *ocd = ocm->crypto_dev[op_type];
-  oct_crypto_sess_t *session;
   vnet_crypto_key_t *key;
   i32 rv = 0;
 
   key = vnet_crypto_get_key (key_index);
-
-  session = oct_crypto_session_alloc (vm, op_type);
-  if (session == NULL)
-    return -1;
 
   if (key->type == VNET_CRYPTO_KEY_TYPE_LINK)
     rv = oct_crypto_link_session_update (vm, session, key_index, op_type);
@@ -1313,6 +1378,8 @@ oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
   session->cpt_inst_w7 =
     oct_cpt_inst_w7_get (session, session->crypto_dev->roc_cpt);
 
+  session->initialised = 1;
+
   return 0;
 }
 
@@ -1328,7 +1395,7 @@ oct_crypto_update_frame_error_status (vnet_crypto_async_frame_t *f,
   f->state = VNET_CRYPTO_FRAME_STATE_NOT_PROCESSED;
 }
 
-int
+static_always_inline int
 oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 			    const u8 is_aead, u8 aad_len, const u8 type)
 {
@@ -1365,14 +1432,15 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 
       if (!key->sess)
 	{
-	  if (oct_crypto_session_create (vm, elts->key_index, type) == -1)
-	    {
 	      oct_crypto_update_frame_error_status (
 		frame, VNET_CRYPTO_OP_STATUS_FAIL_ENGINE_ERR);
 	      return -1;
-	    }
 	}
       sess = key->sess;
+      if (PREDICT_FALSE (!sess->initialised))
+	{
+	  oct_crypto_session_init (vm, sess, elts->key_index, type);
+	}
       crypto_dev = sess->crypto_dev;
 
       memset (inst + i, 0, sizeof (struct cpt_inst_s));
@@ -1461,7 +1529,7 @@ oct_crypto_enqueue_aead_aad_enc (vlib_main_t *vm,
   return 0;
 }
 
-int
+static_always_inline int
 oct_crypto_enqueue_aead_aad_dec (vlib_main_t *vm,
 				 vnet_crypto_async_frame_t *frame, u8 aad_len)
 {

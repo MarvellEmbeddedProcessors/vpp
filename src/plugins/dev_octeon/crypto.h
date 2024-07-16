@@ -84,6 +84,10 @@ typedef struct
   u16 auth_iv_offset;
   /** CPT inst word 7 */
   u64 cpt_inst_w7;
+  /* initialise as part of first packet */
+  u8 initialised;
+  /* store link key index in case of linked algo */
+  vnet_crypto_key_index_t key_index;
   oct_crypto_dev_t *crypto_dev;
   struct roc_se_ctx cpt_ctx;
 } oct_crypto_sess_t;
@@ -151,12 +155,6 @@ int oct_crypto_enqueue_linked_alg_enc (vlib_main_t *vm,
 				       vnet_crypto_async_frame_t *frame);
 int oct_crypto_enqueue_linked_alg_dec (vlib_main_t *vm,
 				       vnet_crypto_async_frame_t *frame);
-int oct_crypto_enqueue_aead_aad_enc (vlib_main_t *vm,
-				     vnet_crypto_async_frame_t *frame,
-				     u8 aad_len);
-int oct_crypto_enqueue_aead_aad_dec (vlib_main_t *vm,
-				     vnet_crypto_async_frame_t *frame,
-				     u8 aad_len);
 int oct_crypto_enqueue_aead_aad_8_enc (vlib_main_t *vm,
 				       vnet_crypto_async_frame_t *frame);
 int oct_crypto_enqueue_aead_aad_12_enc (vlib_main_t *vm,
