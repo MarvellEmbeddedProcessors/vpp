@@ -12,6 +12,13 @@
 #define OCT_MAX_N_CPT_DEV 2
 
 #define OCT_CPT_LF_MAX_NB_DESC 128000
+#define OCT_MAX_CRYPTO_COUNTERS 3
+
+/* counter, name, verbose */
+#define foreach_crypto_counter                                                \
+  _ (0, pending_packets, "crypto-pending-packets")                            \
+  _ (1, crypto_frame, "crypto-pending-frames")                                \
+  _ (2, success_packets, "crypto-success-packets")
 
 /* CRYPTO_ID, KEY_LENGTH_IN_BYTES, TAG_LEN, AAD_LEN */
 #define foreach_oct_crypto_aead_async_alg                                     \
@@ -162,6 +169,11 @@ typedef struct
   u16 n_desc;
   /** Scatter gather data */
   void *sg_data;
+  /** Crypto counters for pending pkts, inflight operations
+   *  and successfully dequeued pkts in queue */
+#define _(i, s, d) vlib_simple_counter_main_t *s;
+  foreach_crypto_counter;
+#undef _
 } oct_crypto_pending_queue_t;
 
 typedef struct
@@ -169,6 +181,9 @@ typedef struct
   oct_crypto_dev_t *crypto_dev[OCT_MAX_N_CPT_DEV];
   oct_crypto_key_t *keys[VNET_CRYPTO_OP_N_TYPES];
   oct_crypto_pending_queue_t *pend_q;
+#define _(i, s, d) vlib_simple_counter_main_t s##_counter;
+  foreach_crypto_counter;
+#undef _
   int n_cpt;
   u8 started;
 } oct_crypto_main_t;
