@@ -28,6 +28,7 @@ endif()
 add_vpp_plugin(dev_octeon
   SOURCES
   init.c
+  cli.c
   format.c
   port.c
   queue.c

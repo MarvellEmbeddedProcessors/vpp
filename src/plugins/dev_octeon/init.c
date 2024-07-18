@@ -284,7 +284,17 @@ oct_init_cpt (vlib_main_t *vm, vnet_dev_t *dev)
   oct_init_crypto_engine_handlers (vm, dev);
 
   if (!ocm->n_cpt)
-    ocm->crypto_dev[0] = ocd;
+    {
+      ocm->crypto_dev[0] = ocd;
+      /* Initialize counters */
+#define _(i, s, str)                                                          \
+  ocm->s##_counter.name = str;                                                \
+  ocm->s##_counter.stat_segment_name = "/octeon/" str "_counters";            \
+  vlib_validate_simple_counter (&ocm->s##_counter, 0);                        \
+  vlib_zero_simple_counter (&ocm->s##_counter, 0);
+      foreach_crypto_counter;
+#undef _
+    }
 
   ocm->crypto_dev[1] = ocd;
 
