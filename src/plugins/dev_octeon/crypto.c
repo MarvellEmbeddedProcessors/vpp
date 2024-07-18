@@ -1498,6 +1498,11 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
   OCT_MOD_INC (pend_q->enq_tail, pend_q->n_desc);
   pend_q->n_crypto_inflight++;
 
+  vlib_increment_simple_counter (pend_q->pending_packets, vm->thread_index, 0,
+				 frame->n_elts);
+  vlib_increment_simple_counter (pend_q->crypto_inflight, vm->thread_index, 0,
+				 1);
+
   return 0;
 }
 
@@ -1609,11 +1614,18 @@ oct_crypto_frame_dequeue (vlib_main_t *vm, u32 *nb_elts_processed,
       infl_req->deq_elts++;
     }
 
+  vlib_decrement_simple_counter (pend_q->pending_packets, vm->thread_index, 0,
+				 infl_req->elts);
+  vlib_increment_simple_counter (pend_q->success_packets, vm->thread_index, 0,
+				 infl_req->elts);
+
   clib_memset ((void *) infl_req->res, 0,
 	       sizeof (union cpt_res_s) * VNET_CRYPTO_FRAME_SIZE);
 
   OCT_MOD_INC (pend_q->deq_head, pend_q->n_desc);
   pend_q->n_crypto_inflight--;
+  vlib_decrement_simple_counter (pend_q->crypto_inflight, vm->thread_index, 0,
+				 1);
 
   frame->state = status == VNET_CRYPTO_OP_STATUS_COMPLETED ?
 			 VNET_CRYPTO_FRAME_STATE_SUCCESS :
@@ -1710,8 +1722,13 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 	      goto free;
 	    }
 	}
+
+#define _(n, s, d) ocm->pend_q[i].s = &ocm->s##_counter;
+      foreach_crypto_counter;
     }
+
   return 0;
+
 free:
   for (; i >= 0; i--)
     {
