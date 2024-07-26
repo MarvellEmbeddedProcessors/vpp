@@ -236,7 +236,7 @@ oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd)
   cpt_lf = &ocd->lf;
   cpt_lmtline = &ocd->lmtline;
 
-  cpt_lf->nb_desc = 8192;
+  cpt_lf->nb_desc = OCT_CPT_LF_MAX_NB_DESC;
   cpt_lf->lf_id = 0;
   if ((rrv = roc_cpt_lf_init (roc_cpt, cpt_lf)) < 0)
     return cnx_return_roc_err (dev, rrv, "roc_cpt_lf_init");
@@ -279,12 +279,14 @@ oct_init_cpt (vlib_main_t *vm, vnet_dev_t *dev)
   if ((rrv = oct_conf_cpt_queue (vm, dev, ocd)))
     return rrv;
 
-  oct_conf_sw_queue (vm, dev);
-
-  oct_init_crypto_engine_handlers (vm, dev);
-
   if (!ocm->n_cpt)
     {
+      /*
+       * Initialize s/w queues, which are common across multiple
+       * crypto devices
+       */
+      oct_conf_sw_queue (vm, dev);
+
       ocm->crypto_dev[0] = ocd;
       /* Initialize counters */
 #define _(i, s, str)                                                          \
@@ -297,6 +299,8 @@ oct_init_cpt (vlib_main_t *vm, vnet_dev_t *dev)
     }
 
   ocm->crypto_dev[1] = ocd;
+
+  oct_init_crypto_engine_handlers (vm, dev);
 
   ocm->n_cpt++;
 
