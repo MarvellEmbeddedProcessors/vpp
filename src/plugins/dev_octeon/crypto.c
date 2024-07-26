@@ -1356,9 +1356,11 @@ oct_crypto_session_init (vlib_main_t *vm, oct_crypto_sess_t *session,
 			 vnet_crypto_key_index_t key_index, int op_type)
 {
   oct_crypto_main_t *ocm = &oct_crypto_main;
-  oct_crypto_dev_t *ocd = ocm->crypto_dev[op_type];
   vnet_crypto_key_t *key;
+  oct_crypto_dev_t *ocd;
   i32 rv = 0;
+
+  ocd = ocm->crypto_dev[op_type];
 
   key = vnet_crypto_get_key (key_index);
 
@@ -1399,10 +1401,10 @@ static_always_inline int
 oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 			    const u8 is_aead, u8 aad_len, const u8 type)
 {
-  oct_crypto_main_t *ocm = &oct_crypto_main;
+  u32 i, enq_tail, enc_auth_len, buffer_index, nb_infl_allowed;
   struct cpt_inst_s inst[VNET_CRYPTO_FRAME_SIZE];
-  u32 i, enq_tail, enc_auth_len, buffer_index;
   u32 crypto_start_offset, integ_start_offset;
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   vnet_crypto_async_frame_elt_t *elts;
   oct_crypto_dev_t *crypto_dev = NULL;
   oct_crypto_inflight_req_t *infl_req;
@@ -1421,6 +1423,14 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 
   enq_tail = pend_q->enq_tail;
 
+  nb_infl_allowed = pend_q->n_desc - pend_q->n_crypto_inflight;
+  if (PREDICT_FALSE (nb_infl_allowed == 0))
+    {
+      oct_crypto_update_frame_error_status (
+	frame, VNET_CRYPTO_OP_STATUS_FAIL_ENGINE_ERR);
+      return -1;
+    }
+
   infl_req = &pend_q->req_queue[enq_tail];
   infl_req->frame = frame;
 
@@ -1430,20 +1440,21 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
       buffer_index = frame->buffer_indices[i];
       key = vec_elt_at_index (ocm->keys[type], elts->key_index);
 
-      if (!key->sess)
+      if (PREDICT_FALSE (!key->sess))
 	{
 	      oct_crypto_update_frame_error_status (
 		frame, VNET_CRYPTO_OP_STATUS_FAIL_ENGINE_ERR);
 	      return -1;
 	}
+
       sess = key->sess;
+
       if (PREDICT_FALSE (!sess->initialised))
-	{
 	  oct_crypto_session_init (vm, sess, elts->key_index, type);
-	}
+
       crypto_dev = sess->crypto_dev;
 
-      memset (inst + i, 0, sizeof (struct cpt_inst_s));
+      clib_memset (inst + i, 0, sizeof (struct cpt_inst_s));
 
       buffer = vlib_get_buffer (vm, buffer_index);
 
@@ -1510,38 +1521,32 @@ int
 oct_crypto_enqueue_linked_alg_enc (vlib_main_t *vm,
 				   vnet_crypto_async_frame_t *frame)
 {
-  oct_crypto_enqueue_enc_dec (vm, frame, 0 /* is_aead */, 0 /* aad_len */,
-			      VNET_CRYPTO_OP_TYPE_ENCRYPT);
-  return 0;
+  return oct_crypto_enqueue_enc_dec (
+    vm, frame, 0 /* is_aead */, 0 /* aad_len */, VNET_CRYPTO_OP_TYPE_ENCRYPT);
 }
 
 int
 oct_crypto_enqueue_linked_alg_dec (vlib_main_t *vm,
 				   vnet_crypto_async_frame_t *frame)
 {
-  oct_crypto_enqueue_enc_dec (vm, frame, 0 /* is_aead */, 0 /* aad_len */,
-			      VNET_CRYPTO_OP_TYPE_DECRYPT);
-  return 0;
+  return oct_crypto_enqueue_enc_dec (
+    vm, frame, 0 /* is_aead */, 0 /* aad_len */, VNET_CRYPTO_OP_TYPE_DECRYPT);
 }
 
 int
 oct_crypto_enqueue_aead_aad_enc (vlib_main_t *vm,
 				 vnet_crypto_async_frame_t *frame, u8 aad_len)
 {
-  oct_crypto_enqueue_enc_dec (vm, frame, 1 /* is_aead */, aad_len,
-			      VNET_CRYPTO_OP_TYPE_ENCRYPT);
-
-  return 0;
+  return oct_crypto_enqueue_enc_dec (vm, frame, 1 /* is_aead */, aad_len,
+				     VNET_CRYPTO_OP_TYPE_ENCRYPT);
 }
 
 static_always_inline int
 oct_crypto_enqueue_aead_aad_dec (vlib_main_t *vm,
 				 vnet_crypto_async_frame_t *frame, u8 aad_len)
 {
-  oct_crypto_enqueue_enc_dec (vm, frame, 1 /* is_aead */, aad_len,
-			      VNET_CRYPTO_OP_TYPE_DECRYPT);
-
-  return 0;
+  return oct_crypto_enqueue_enc_dec (vm, frame, 1 /* is_aead */, aad_len,
+				     VNET_CRYPTO_OP_TYPE_DECRYPT);
 }
 
 int
@@ -1680,9 +1685,10 @@ int
 oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 {
   vlib_thread_main_t *tm = vlib_get_thread_main ();
-  oct_crypto_main_t *ocm = &oct_crypto_main;
   extern oct_plt_init_param_t oct_plt_init_param;
+  oct_crypto_main_t *ocm = &oct_crypto_main;
   oct_crypto_inflight_req_t *infl_req_queue;
+  u32 n_inflight_req;
   int i, j = 0;
 
   ocm->pend_q = oct_plt_init_param.oct_plt_zmalloc (
@@ -1694,13 +1700,19 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
       return -1;
     }
 
+  /*
+   * Each pending queue will get number of cpt desc / number of cores.
+   * And that desc count is shared across inflight entries.
+   */
+  n_inflight_req =
+    (OCT_CPT_LF_MAX_NB_DESC / tm->n_vlib_mains) / VNET_CRYPTO_FRAME_SIZE;
+
   for (i = 0; i < tm->n_vlib_mains; ++i)
     {
-      ocm->pend_q[i].n_desc = OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT;
+      ocm->pend_q[i].n_desc = n_inflight_req;
 
       ocm->pend_q[i].req_queue = oct_plt_init_param.oct_plt_zmalloc (
-	OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT *
-	  sizeof (oct_crypto_inflight_req_t),
+	ocm->pend_q[i].n_desc * sizeof (oct_crypto_inflight_req_t),
 	CLIB_CACHE_LINE_BYTES);
       if (ocm->pend_q[i].req_queue == NULL)
 	{

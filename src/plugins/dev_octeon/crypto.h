@@ -11,6 +11,8 @@
 
 #define OCT_MAX_N_CPT_DEV 2
 
+#define OCT_CPT_LF_MAX_NB_DESC 128000
+
 #define OCT_MAX_CRYPTO_COUNTERS 3
 
 /* counter, name, verbose */
@@ -54,7 +56,6 @@
 #define OCT_MOD_INC(i, l) ((i) == (l - 1) ? (i) = 0 : (i)++)
 
 #define OCT_SCATTER_GATHER_BUFFER_SIZE		1024
-#define OCT_CRYPTO_DEFAULT_SW_ASYNC_FRAME_COUNT 256
 
 #define CPT_LMT_SIZE_COPY (sizeof (struct cpt_inst_s) / 16)
 #define OCT_MAX_LMT_SZ	  16
