@@ -22,25 +22,25 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
 		    u16 virtio_devid)
 {
   int idx = 0;
-  u64 tx_q_map;
-  u64 q_map;
+  u64 tx_q_map, q_map;
   u32 cpu_id = vm->cpu_id;
-  u16 nb_pkts_left = nb_pkts;
+  u16 nb_pkts_left = nb_pkts, hdr_len;
   u16 queue, virt_q, sent = 0, cur_sent = 0;
   void *virt_b[VLIB_FRAME_SIZE];
   struct dao_virtio_net_hdr *v_hdr[4];
-  struct dao_virtio_net_hdr vhdr_init = {};
+  struct dao_virtio_net_hdr vhdr_init = { 0 };
   oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
 
   tx_q_map = ptd[cpu_id].q_map[virtio_devid].qmap;
   q_map = ptd[cpu_id].q_map[virtio_devid].qmap;
+  hdr_len = ptd[cpu_id].q_map[virtio_devid].virtio_hdr_sz;
 
   while (nb_pkts >= 8)
     {
-      v_hdr[0] = oct_bp_to_virt (b[0]);
-      v_hdr[1] = oct_bp_to_virt (b[1]);
-      v_hdr[2] = oct_bp_to_virt (b[2]);
-      v_hdr[3] = oct_bp_to_virt (b[3]);
+      v_hdr[0] = oct_bp_to_virt (b[0], hdr_len);
+      v_hdr[1] = oct_bp_to_virt (b[1], hdr_len);
+      v_hdr[2] = oct_bp_to_virt (b[2], hdr_len);
+      v_hdr[3] = oct_bp_to_virt (b[3], hdr_len);
 
       *v_hdr[0] = vhdr_init;
       *v_hdr[1] = vhdr_init;
@@ -52,10 +52,10 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
       virt_b[idx + 2] = (void *) v_hdr[2];
       virt_b[idx + 3] = (void *) v_hdr[3];
 
-      clib_prefetch_store (oct_bp_to_virt (b[4]));
-      clib_prefetch_store (oct_bp_to_virt (b[5]));
-      clib_prefetch_store (oct_bp_to_virt (b[6]));
-      clib_prefetch_store (oct_bp_to_virt (b[7]));
+      clib_prefetch_store (oct_bp_to_virt (b[4], hdr_len));
+      clib_prefetch_store (oct_bp_to_virt (b[5], hdr_len));
+      clib_prefetch_store (oct_bp_to_virt (b[6], hdr_len));
+      clib_prefetch_store (oct_bp_to_virt (b[7], hdr_len));
 
       vlib_prefetch_buffer_header (b[4], LOAD);
       vlib_prefetch_buffer_header (b[5], LOAD);
@@ -67,6 +67,7 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
       v_hdr[2]->desc_data[1] = b[2]->current_length;
       v_hdr[3]->desc_data[1] = b[3]->current_length;
 
+      /* Number of bytes deviates (+/-) from vlib buffer current data */
       v_hdr[0]->desc_data[0] = ~b[0]->current_data + 1;
       v_hdr[1]->desc_data[0] = ~b[1]->current_data + 1;
       v_hdr[2]->desc_data[0] = ~b[2]->current_data + 1;
@@ -84,11 +85,12 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
 
   while (nb_pkts)
     {
-      v_hdr[0] = oct_bp_to_virt (b[0]);
+      v_hdr[0] = oct_bp_to_virt (b[0], hdr_len);
       *v_hdr[0] = vhdr_init;
       v_hdr[0]->hdr.num_buffers = 1;
       virt_b[idx] = (void *) v_hdr[0];
       v_hdr[0]->desc_data[1] = b[0]->current_length;
+      /* Number of bytes deviates (+/-) from vlib buffer current data */
       v_hdr[0]->desc_data[0] = ~b[0]->current_data + 1;
 
       b++;

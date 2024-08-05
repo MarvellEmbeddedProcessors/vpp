@@ -23,12 +23,16 @@ int
 oct_virtio_vlib_buffer_free (u16 devid, void *buffs[], u16 nb_buffs)
 {
   int i = 0;
+  u16 hdr_len;
   u32 bi[nb_buffs];
   vlib_buffer_t *b[nb_buffs];
+  u32 cpu_id = clib_get_current_cpu_id ();
   vlib_main_t *vm = vlib_get_first_main ();
+  oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
 
+  hdr_len = ptd[cpu_id].q_map[devid].virtio_hdr_sz;
   for (i = 0; i < nb_buffs; i++)
-    b[i] = oct_virt_to_bp (buffs[i]);
+    b[i] = oct_virt_to_bp (buffs[i], hdr_len);
 
   vlib_get_buffer_indices (vm, b, bi, nb_buffs);
   vlib_buffer_free_no_next (vm, bi, nb_buffs);
@@ -40,11 +44,15 @@ int
 oct_virtio_vlib_buffer_alloc (u16 devid, void *buffs[], u16 nb_buffs)
 {
   int i = 0;
+  u16 hdr_len;
   u16 allocated;
   u32 vbuf_idxs[nb_buffs];
   vlib_buffer_t *b[nb_buffs];
+  u32 cpu_id = clib_get_current_cpu_id ();
   vlib_main_t *vm = vlib_get_first_main ();
+  oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
 
+  hdr_len = ptd[cpu_id].q_map[devid].virtio_hdr_sz;
   allocated = vlib_buffer_alloc (vm, vbuf_idxs, nb_buffs);
   if (allocated != nb_buffs)
     {
@@ -54,7 +62,7 @@ oct_virtio_vlib_buffer_alloc (u16 devid, void *buffs[], u16 nb_buffs)
   vlib_get_buffers (vm, vbuf_idxs, b, nb_buffs);
 
   for (i = 0; i < nb_buffs; i++)
-    buffs[i] = oct_bp_to_virt (b[i]);
+    buffs[i] = oct_bp_to_virt (b[i], hdr_len);
 
   return 0;
 }
@@ -113,6 +121,24 @@ oct_virtio_clear_lcore_queue_mapping (u16 virtio_devid)
   ovm->netdev_qp_count[virtio_devid] = 0;
 }
 
+static_always_inline u16
+oct_virtio_netdev_hdrlen_get (u16 virtio_devid)
+{
+  struct virtio_net_hdr vnet_hdr;
+  u16 virtio_hdr_sz = 0;
+  u64 feature_bits = 0;
+
+  feature_bits = dao_virtio_netdev_feature_bits_get (virtio_devid);
+
+  if (feature_bits & DAO_BIT_ULL (VIRTIO_NET_F_HASH_REPORT))
+    virtio_hdr_sz = offsetof (struct virtio_net_hdr, padding_reserved) +
+		    sizeof (vnet_hdr.padding_reserved);
+  else
+    virtio_hdr_sz = offsetof (struct virtio_net_hdr, num_buffers) +
+		    sizeof (vnet_hdr.num_buffers);
+  return virtio_hdr_sz;
+}
+
 static_always_inline int
 oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
 {
@@ -121,6 +147,10 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
   oct_virtio_main_t *ovm = oct_virtio_main;
   u64 wrkr_cpu_mask = ovm->wrkr_cpu_mask;
   oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
+  u16 virtio_hdr_sz = 0;
+
+  virtio_hdr_sz = oct_virtio_netdev_hdrlen_get (virtio_devid);
+  ptd[ptd->service_core].q_map[virtio_devid].virtio_hdr_sz = virtio_hdr_sz;
 
   virt_rx_q = virt_q_count / 2;
   q_id = 0;
@@ -130,8 +160,9 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
 	cpu_id++;
 
       ptd[cpu_id].q_map[virtio_devid].qmap |= DAO_BIT_ULL (q_id);
-      ptd[cpu_id].netdev_map |= DAO_BIT (virtio_devid);
+      ptd[cpu_id].q_map[virtio_devid].virtio_hdr_sz = virtio_hdr_sz;
       CLIB_MEMORY_BARRIER ();
+      ptd[cpu_id].netdev_map |= DAO_BIT (virtio_devid);
 
       wrkr_cpu_mask &= ~DAO_BIT_ULL (cpu_id);
       cpu_id++;
@@ -143,8 +174,8 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
     }
 
   ovm->netdev_qp_count[virtio_devid] = virt_q_count / 2;
-  ovm->netdev_map |= DAO_BIT (virtio_devid);
   CLIB_MEMORY_BARRIER ();
+  ovm->netdev_map |= DAO_BIT (virtio_devid);
 
   return 0;
 }
@@ -264,10 +295,12 @@ virtio_ctrl_thread_fn (void *args)
 {
   vlib_worker_thread_t *w = (vlib_worker_thread_t *) args;
   oct_virtio_main_t *ovm = oct_virtio_main;
+  oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
   u32 cpu_id = clib_get_current_cpu_id ();
 
   vlib_worker_thread_init (w);
   ovm->wrkr_cpu_mask |= DAO_BIT (cpu_id);
+  ptd->service_core = cpu_id;
   /* Wait till Octeon virtio DAO lib init is complete */
   while (!ovm || !ovm->dao_lib_initialized)
     CLIB_PAUSE ();

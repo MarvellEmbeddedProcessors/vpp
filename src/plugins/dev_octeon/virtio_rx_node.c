@@ -39,20 +39,20 @@ oct_virt_trace_rx_buffers (vlib_main_t *vm, vlib_node_runtime_t *node,
 
 static_always_inline vlib_buffer_t *
 oct_virt_populate_inner_segments (vlib_main_t *vm, vlib_buffer_t *head,
-				  void *p, u32 pool_idx)
+				  void *p, u32 pool_idx, u16 hdr_len)
 {
   vlib_buffer_t *prev, *b;
   struct dao_virtio_net_hdr *v_hdr;
 
   v_hdr = (struct dao_virtio_net_hdr *) p;
-  b = oct_virt_to_bp (p);
+  b = oct_virt_to_bp (p, hdr_len);
   head->total_length_not_including_first_buffer += b->current_length;
   prev = b;
   while (v_hdr->desc_data[0])
     {
       v_hdr = (struct dao_virtio_net_hdr *) v_hdr->desc_data[0];
-      b = oct_virt_to_bp ((void *) v_hdr->desc_data[0]);
-      b->current_length = OCT_VIRT_LENGTH (v_hdr);
+      b = oct_virt_to_bp ((void *) v_hdr->desc_data[0], hdr_len);
+      b->current_length = OCT_VIRT_LENGTH (v_hdr) - hdr_len;
       b->current_data = 0;
       prev->flags |= VLIB_BUFFER_NEXT_PRESENT;
       head->total_length_not_including_first_buffer += b->current_length;
@@ -67,7 +67,8 @@ oct_virt_populate_inner_segments (vlib_main_t *vm, vlib_buffer_t *head,
 
 static_always_inline vlib_buffer_t *
 oct_virt_process_chained_packets (vlib_main_t *vm, void **pkts,
-				  u32 *nb_pkts_chain, u32 *n_rx_bytes)
+				  u32 *nb_pkts_chain, u32 *n_rx_bytes,
+				  u16 hdr_len)
 {
   u32 vhdr_len = sizeof (struct virtio_net_hdr);
   struct dao_virtio_net_hdr *v_hdr;
@@ -78,8 +79,8 @@ oct_virt_process_chained_packets (vlib_main_t *vm, void **pkts,
 
   pool_idx = vlib_buffer_pool_get_default_for_numa (vm, 0);
   v_hdr = (struct dao_virtio_net_hdr *) pkts[idx];
-  len = OCT_VIRT_LENGTH (v_hdr);
-  head = oct_virt_to_bp (pkts[idx]);
+  len = OCT_VIRT_LENGTH (v_hdr) - hdr_len;
+  head = oct_virt_to_bp (pkts[idx], hdr_len);
 
   /**
    * If Host uses linux virtio interface skip first buffer as it contains
@@ -91,19 +92,20 @@ oct_virt_process_chained_packets (vlib_main_t *vm, void **pkts,
       vlib_buffer_free_no_next (vm, &buffer_index, 1);
 
       idx++;
-      head = oct_virt_to_bp (pkts[idx]);
+      head = oct_virt_to_bp (pkts[idx], hdr_len);
       head->buffer_pool_index = pool_idx;
     }
 
   do
     {
       v_hdr = (struct dao_virtio_net_hdr *) pkts[idx];
-      b = oct_virt_to_bp (pkts[idx]);
-      b->current_length = OCT_VIRT_LENGTH (v_hdr);
+      b = oct_virt_to_bp (pkts[idx], hdr_len);
+      b->current_length = OCT_VIRT_LENGTH (v_hdr) - hdr_len;
       b->current_data = 0;
       /* Check for DPU side segmentation */
       if (PREDICT_FALSE ((v_hdr->desc_data[0])))
-	b = oct_virt_populate_inner_segments (vm, head, pkts[idx], pool_idx);
+	b = oct_virt_populate_inner_segments (vm, head, pkts[idx], pool_idx,
+					      hdr_len);
 
       if (prev)
 	{
@@ -129,7 +131,8 @@ oct_virt_process_chained_packets (vlib_main_t *vm, void **pkts,
 static_always_inline u32
 oct_virtio_process_virtio_packets (vlib_main_t *vm, void **pkts,
 				   vlib_buffer_t **b, u32 *n_rx_pkts,
-				   u32 *to_next, vnet_dev_rx_queue_t *rxq)
+				   u32 *to_next, vnet_dev_rx_queue_t *rxq,
+				   u16 hdr_len)
 {
   u8 flags = 0;
   int idx = 0;
@@ -153,25 +156,25 @@ oct_virtio_process_virtio_packets (vlib_main_t *vm, void **pkts,
       if (PREDICT_FALSE (flags))
 	break;
 
-      b[0] = oct_virt_to_bp (pkts[idx + 0]);
-      b[1] = oct_virt_to_bp (pkts[idx + 1]);
-      b[2] = oct_virt_to_bp (pkts[idx + 2]);
-      b[3] = oct_virt_to_bp (pkts[idx + 3]);
+      b[0] = oct_virt_to_bp (pkts[idx + 0], hdr_len);
+      b[1] = oct_virt_to_bp (pkts[idx + 1], hdr_len);
+      b[2] = oct_virt_to_bp (pkts[idx + 2], hdr_len);
+      b[3] = oct_virt_to_bp (pkts[idx + 3], hdr_len);
 
-      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 4]));
-      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 5]));
-      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 6]));
-      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 7]));
+      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 4], hdr_len));
+      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 5], hdr_len));
+      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 6], hdr_len));
+      clib_prefetch_store (oct_virt_to_bp (pkts[idx + 7], hdr_len));
 
       b[0]->template = bt;
       b[1]->template = bt;
       b[2]->template = bt;
       b[3]->template = bt;
 
-      b[0]->current_length = OCT_VIRT_LENGTH (v_hdr[0]);
-      b[1]->current_length = OCT_VIRT_LENGTH (v_hdr[1]);
-      b[2]->current_length = OCT_VIRT_LENGTH (v_hdr[2]);
-      b[3]->current_length = OCT_VIRT_LENGTH (v_hdr[3]);
+      b[0]->current_length = OCT_VIRT_LENGTH (v_hdr[0]) - hdr_len;
+      b[1]->current_length = OCT_VIRT_LENGTH (v_hdr[1]) - hdr_len;
+      b[2]->current_length = OCT_VIRT_LENGTH (v_hdr[2]) - hdr_len;
+      b[3]->current_length = OCT_VIRT_LENGTH (v_hdr[3]) - hdr_len;
 
       n_rx_bytes += b[0]->current_length;
       n_rx_bytes += b[1]->current_length;
@@ -194,15 +197,15 @@ oct_virtio_process_virtio_packets (vlib_main_t *vm, void **pkts,
     {
       nb_pkts_chain = 1;
       v_hdr[0] = (struct dao_virtio_net_hdr *) pkts[idx];
-      b[0] = oct_virt_to_bp (pkts[idx]);
+      b[0] = oct_virt_to_bp (pkts[idx], hdr_len);
       b[0]->template = bt;
 
       if (OCT_VIRT_NEXT_FLAG (v_hdr[0]))
-	b[0] = oct_virt_process_chained_packets (vm, &pkts[idx],
-						 &nb_pkts_chain, &n_rx_bytes);
+	b[0] = oct_virt_process_chained_packets (
+	  vm, &pkts[idx], &nb_pkts_chain, &n_rx_bytes, hdr_len);
       else
 	{
-	  b[0]->current_length = OCT_VIRT_LENGTH (v_hdr[0]);
+	  b[0]->current_length = OCT_VIRT_LENGTH (v_hdr[0]) - hdr_len;
 	  n_rx_bytes += b[0]->current_length;
 	  b[0]->current_data = 0;
 	}
@@ -233,9 +236,9 @@ oct_virtio_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 cpu_id = vm->cpu_id;
   void *pkts[VLIB_FRAME_SIZE];
   u32 *to_next, n_left_to_next;
-  u16 queue, virt_q, virtio_id;
   vlib_buffer_t *b[VLIB_FRAME_SIZE];
   vnet_main_t *vnm = vnet_get_main ();
+  u16 queue, virt_q, virtio_id, hdr_len;
   u32 thr_idx = vlib_get_thread_index ();
   oct_virtio_main_t *ovm = oct_virtio_main;
   u32 n_rx_pkts, n_rx_bytes = 0, rx_pkts_total = 0;
@@ -265,6 +268,7 @@ oct_virtio_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   dao_dma_flush_submit ();
 
   queue = ptd[cpu_id].q_map[virtio_id].last_rx_q;
+  hdr_len = ptd[cpu_id].q_map[virtio_id].virtio_hdr_sz;
 
   while (rx_q_map)
     {
@@ -284,7 +288,7 @@ oct_virtio_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 			       n_left_to_next);
 
       n_rx_bytes += oct_virtio_process_virtio_packets (vm, pkts, b, &n_rx_pkts,
-						       to_next, rxq);
+						       to_next, rxq, hdr_len);
 
       if (PREDICT_FALSE (trace_count))
 	trace_count -=

@@ -52,17 +52,20 @@ typedef struct
 } oct_virt_rx_trace_t;
 
 always_inline vlib_buffer_t *
-oct_virt_to_bp (void *b)
+oct_virt_to_bp (void *b, u16 hdr_len)
 {
-  return (vlib_buffer_t *) ((u8 *) b + sizeof (struct dao_virtio_net_hdr) -
-			    sizeof (vlib_buffer_t));
+  return (
+    vlib_buffer_t *) ((u8 *) b +
+		      sizeof (((struct dao_virtio_net_hdr *) 0)->desc_data) +
+		      hdr_len - sizeof (vlib_buffer_t));
 }
 
 always_inline void *
-oct_bp_to_virt (vlib_buffer_t *b)
+oct_bp_to_virt (vlib_buffer_t *b, u16 hdr_len)
 {
   return (void *) ((u8 *) vlib_buffer_get_current (b) -
-		   sizeof (struct dao_virtio_net_hdr));
+		   sizeof (((struct dao_virtio_net_hdr *) 0)->desc_data) -
+		   hdr_len);
 }
 
 typedef struct
@@ -99,11 +102,13 @@ typedef struct
   u64 qmap;
   u16 last_rx_q;
   u16 last_tx_q;
+  u16 virtio_hdr_sz;
 } oct_virtio_q_info_t;
 
 typedef struct
 {
   u8 initialized;
+  u16 service_core;
   u64 netdev_map;
   oct_virtio_q_info_t q_map[DAO_VIRTIO_DEV_MAX];
 } oct_virtio_per_thread_data_t;
