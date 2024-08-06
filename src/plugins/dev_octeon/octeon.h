@@ -20,6 +20,7 @@
 #include <vxlan/vxlan.h>
 #include <base/roc_api.h>
 #include <dev_octeon/hw_defs.h>
+#include <dev_octeon/ipsec.h>
 
 #define OCT_NPA_MAX_POOLS	   8192
 #define OCT_BATCH_ALLOC_IOVA0_MASK 0xFFFFFFFFFFFFFF80
@@ -46,6 +47,8 @@ typedef enum
   OCT_DEVICE_TYPE_SDP_VF,
   OCT_DEVICE_TYPE_O10K_CPT_VF,
   OCT_DEVICE_TYPE_O9K_CPT_VF,
+  OCT_DEVICE_TYPE_RVU_INL_PF,
+  OCT_DEVICE_TYPE_RVU_INL_VF,
 } __clib_packed oct_device_type_t;
 
 typedef struct
@@ -123,6 +126,17 @@ typedef struct
   struct roc_nix_sq sq;
 } oct_txq_t;
 
+typedef struct
+{
+  oct_device_t **oct_dev;
+  u8 inl_dev_initialized : 1;
+  u8 use_single_rx_aura : 1;
+  u64 aura_handle;
+
+} oct_main_t;
+
+extern oct_main_t oct_main;
+
 /* format.c */
 format_function_t format_oct_port_status;
 format_function_t format_oct_rx_trace;
@@ -144,7 +158,7 @@ vnet_dev_rv_t oct_rx_queue_alloc (vlib_main_t *, vnet_dev_rx_queue_t *);
 vnet_dev_rv_t oct_tx_queue_alloc (vlib_main_t *, vnet_dev_tx_queue_t *);
 void oct_rx_queue_free (vlib_main_t *, vnet_dev_rx_queue_t *);
 void oct_tx_queue_free (vlib_main_t *, vnet_dev_tx_queue_t *);
-vnet_dev_rv_t oct_rxq_init (vlib_main_t *, vnet_dev_rx_queue_t *);
+vnet_dev_rv_t oct_rxq_init (vlib_main_t *, vnet_dev_rx_queue_t *, u32);
 vnet_dev_rv_t oct_txq_init (vlib_main_t *, vnet_dev_tx_queue_t *);
 void oct_rxq_deinit (vlib_main_t *, vnet_dev_rx_queue_t *);
 void oct_txq_deinit (vlib_main_t *, vnet_dev_tx_queue_t *);
@@ -185,6 +199,19 @@ vnet_dev_rv_t oct_txq_get_stats (vlib_main_t *, vnet_dev_port_t *,
   vlib_log (VLIB_LOG_LEVEL_ERR, oct_log.class, "%U: " f,                      \
 	    format_vnet_dev_addr, (dev), ##__VA_ARGS__)
 
+#define foreach_oct_rx_node_counter                                           \
+  _ (ERR_UNDEFINED, err_undefined, ERROR, "undefined decrypt error")
+
+/* clang-format off */
+typedef enum
+{
+#define _(f, n, s, d) OCT_RX_NODE_CTR_##f,
+  foreach_octeon10_ipsec_ucc
+  foreach_oct_rx_node_counter
+#undef _
+} oct_rx_node_counter_t;
+/* clang-format on */
+
 #define foreach_oct_tx_node_counter                                           \
   _ (CHAIN_TOO_LONG, chain_too_long, ERROR, "drop due to buffer chain > 6")   \
   _ (NO_FREE_SLOTS, no_free_slots, ERROR, "no free tx slots")                 \
@@ -213,4 +240,5 @@ typedef struct
   u32 sw_if_index;
   oct_tx_desc_t desc;
 } oct_tx_trace_t;
+
 #endif /* _OCTEON_H_ */
