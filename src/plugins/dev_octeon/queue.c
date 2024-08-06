@@ -85,8 +85,9 @@ oct_tx_queue_free (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
 }
 
 vnet_dev_rv_t
-oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq)
+oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
 {
+  oct_main_t *om = &oct_main;
   oct_rxq_t *crq = vnet_dev_get_rx_queue_data (rxq);
   vnet_dev_t *dev = rxq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
@@ -98,11 +99,19 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq)
   struct npa_aura_s aura = {};
   struct npa_pool_s npapool = { .nat_align = 1 };
 
-  if ((rrv = roc_npa_pool_create (&crq->aura_handle, bp->alloc_size, rxq->size,
-				  &aura, &npapool, 0)))
+  if (!om->use_single_rx_aura || !om->aura_handle)
     {
-      oct_rxq_deinit (vm, rxq);
-      return oct_roc_err (dev, rrv, "roc_npa_pool_create() failed");
+      if ((rrv = roc_npa_pool_create (&crq->aura_handle, bp->alloc_size,
+				      total_sz, &aura, &npapool, 0)))
+	{
+	  oct_rxq_deinit (vm, rxq);
+	  return oct_roc_err (dev, rrv, "roc_npa_pool_create() failed");
+	}
+      om->aura_handle = crq->aura_handle;
+    }
+  else
+    {
+      crq->aura_handle = om->aura_handle;
     }
 
   crq->npa_pool_initialized = 1;
@@ -131,13 +140,13 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq)
     .qid = rxq->queue_id,
     .cqid = crq->cq.qid,
     .aura_handle = crq->aura_handle,
-    .first_skip = crq->hdr_off + sizeof (vlib_buffer_t),
-    .later_skip = crq->hdr_off + sizeof (vlib_buffer_t),
-    .lpb_size = bp->data_size + crq->hdr_off + sizeof (vlib_buffer_t),
+    .first_skip = sizeof (vlib_buffer_t),
+    .later_skip = sizeof (vlib_buffer_t),
+    .lpb_size = bp->data_size + sizeof (vlib_buffer_t),
     .flow_tag_width = 32,
   };
 
-  if ((rrv = roc_nix_rq_init (nix, &crq->rq, 1 /* disable */)))
+  if ((rrv = roc_nix_rq_init (nix, &crq->rq, false /* disable */)))
     {
       oct_rxq_deinit (vm, rxq);
       return oct_roc_err (dev, rrv, "roc_nix_rq_init(qid = %u) failed",
@@ -152,6 +161,15 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq)
     (0x7 << 4);
 
   log_debug (dev, "RQ %u initialised", crq->cq.qid);
+  /* Configure inline device rq */
+  rrv = roc_nix_inl_dev_rq_get (&crq->rq, 0 /* disable */);
+  if (rrv)
+    {
+      clib_warning ("roc_nix_inl_dev_rq_get failed with '%s' error",
+		    roc_error_msg_get (rrv));
+
+      return -1;
+    }
 
   return VNET_DEV_OK;
 }

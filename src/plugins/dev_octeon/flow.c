@@ -136,6 +136,10 @@ oct_flow_validate_params (vlib_main_t *vm, vnet_dev_port_t *port,
   u32 last_queue;
   u32 qid;
 
+  if ((flow->actions & VNET_FLOW_ACTION_REDIRECT_TO_QUEUE) &&
+      flow->redirect_queue == ~0 && flow->type == VNET_FLOW_TYPE_IP4_IPSEC_ESP)
+    return VNET_DEV_OK;
+
   if (type == VNET_DEV_PORT_CFG_GET_RX_FLOW_COUNTER ||
       type == VNET_DEV_PORT_CFG_RESET_RX_FLOW_COUNTER)
     {
@@ -536,6 +540,7 @@ static vnet_dev_rv_t
 oct_flow_add (vlib_main_t *vm, vnet_dev_port_t *port, vnet_flow_t *flow,
 	      uword *private_data)
 {
+  oct_main_t *om = &oct_main;
   struct roc_npc_item_info item_info[ROC_NPC_ITEM_TYPE_END] = {};
   struct roc_npc_action actions[ROC_NPC_ITEM_TYPE_END] = {};
   oct_port_t *oct_port = vnet_dev_get_port_data (port);
@@ -548,6 +553,7 @@ oct_flow_add (vlib_main_t *vm, vnet_dev_port_t *port, vnet_flow_t *flow,
   udp_header_t udp_spec = {}, udp_mask = {};
   tcp_header_t tcp_spec = {}, tcp_mask = {};
   esp_header_t esp_spec = {}, esp_mask = {};
+  vnet_flow_ip4_ipsec_esp_t *esp_hdr;
   u16 l4_src_port = 0, l4_dst_port = 0;
   u16 l4_src_mask = 0, l4_dst_mask = 0;
   struct roc_npc_action_rss rss_conf = {};
@@ -562,6 +568,33 @@ oct_flow_add (vlib_main_t *vm, vnet_dev_port_t *port, vnet_flow_t *flow,
   u64 flow_key = 0;
   u8 proto = 0;
   u16 action = 0;
+
+  if ((flow->actions & VNET_FLOW_ACTION_REDIRECT_TO_QUEUE) &&
+      flow->redirect_queue == ~0 && flow->type == VNET_FLOW_TYPE_IP4_IPSEC_ESP)
+    {
+      if (!om->inl_dev_initialized)
+	{
+	  log_err (port->dev, "Inline device is not initialized");
+	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	}
+
+      esp_hdr = &flow->ip4_ipsec_esp;
+      esp_spec.spi = clib_host_to_net_u32 (esp_hdr->spi);
+      esp_mask.spi = 0; /* Any */
+      item_info[0].spec = (void *) &esp_spec;
+      item_info[0].mask = (void *) &esp_mask;
+      item_info[0].size = sizeof (u32);
+      item_info[0].type = ROC_NPC_ITEM_TYPE_ESP;
+      item_info[1].type = ROC_NPC_ITEM_TYPE_END;
+
+      actions[0].conf = (void *) NULL;
+      actions[0].type = ROC_NPC_ACTION_TYPE_SEC;
+      actions[1].type = ROC_NPC_ACTION_TYPE_COUNT;
+      actions[2].type = ROC_NPC_ACTION_TYPE_END;
+
+      return oct_flow_rule_create (port, actions, item_info, flow,
+				   private_data);
+    }
 
   if (FLOW_IS_GENERIC_TYPE (flow))
     {

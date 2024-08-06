@@ -7,11 +7,14 @@
 #include <vnet/dev/counters.h>
 #include <dev_octeon/octeon.h>
 #include <dev_octeon/common.h>
+#include <dev_octeon/ipsec.h>
 #include <vnet/ethernet/ethernet.h>
 
 #define OCT_FLOW_PREALLOC_SIZE	1
 #define OCT_FLOW_MAX_PRIORITY	7
 #define OCT_ETH_LINK_SPEED_100G 100000 /**< 100 Gbps */
+
+extern oct_inl_dev_main_t oct_inl_dev_main;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -210,9 +213,13 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
   cp->npc_initialized = 1;
 
+  u64 total_sz = 0;
+  foreach_vnet_dev_port_rx_queue (q, port)
+    total_sz += q->size;
+
   foreach_vnet_dev_port_rx_queue (q, port)
     if (q->enabled)
-      if ((rv = oct_rxq_init (vm, q)))
+      if ((rv = oct_rxq_init (vm, q, total_sz)))
 	{
 	  oct_port_deinit (vm, port);
 	  return rv;
@@ -457,6 +464,7 @@ oct_txq_stop (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
 vnet_dev_rv_t
 oct_port_start (vlib_main_t *vm, vnet_dev_port_t *port)
 {
+  oct_inl_dev_main_t *inl_main = &oct_inl_dev_main;
   vnet_dev_t *dev = port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
   oct_port_t *cp = vnet_dev_get_port_data (port);
@@ -465,11 +473,20 @@ oct_port_start (vlib_main_t *vm, vnet_dev_port_t *port)
   vnet_dev_rv_t rv;
   int rrv;
 
-  log_debug (port->dev, "port start: port %u", port->port_id);
+  log_info (port->dev, "port start: port %u", port->port_id);
 
   foreach_vnet_dev_port_rx_queue (q, port)
     if ((rv = oct_rxq_start (vm, q)) != VNET_DEV_OK)
       goto done;
+
+  if (inl_main->inl_dev)
+    {
+      if ((rrv = roc_nix_inl_rq_ena_dis (nix, true)))
+	{
+	  rv = oct_roc_err (dev, rrv, "roc_nix_inl_rq_ena_dis failed");
+	  goto done;
+	}
+    }
 
   foreach_vnet_dev_port_tx_queue (q, port)
     {
