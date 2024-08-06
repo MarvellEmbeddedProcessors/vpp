@@ -11,13 +11,16 @@
 #include <vpp/app/version.h>
 #include <dev_octeon/octeon.h>
 #include <dev_octeon/crypto.h>
+#include <dev_octeon/ipsec.h>
 
 #include <base/roc_api.h>
 #include <common.h>
 
 struct roc_model oct_model;
 u32 oct_npa_max_pools = OCT_NPA_MAX_POOLS;
+oct_main_t oct_main;
 extern oct_crypto_main_t oct_crypto_main;
+extern oct_inl_dev_main_t oct_inl_dev_main;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -27,11 +30,20 @@ VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
 #define _(f, n, s, d)                                                         \
   { .name = #n, .desc = d, .severity = VL_COUNTER_SEVERITY_##s },
 
+vlib_error_desc_t oct_rx_node_counters[] = {
+  /* clang-format off */
+  foreach_octeon10_ipsec_ucc
+  foreach_oct_rx_node_counter
+  /* clang-format on */
+};
+
 vlib_error_desc_t oct_tx_node_counters[] = { foreach_oct_tx_node_counter };
 #undef _
 
 vnet_dev_node_t oct_rx_node = {
   .format_trace = format_oct_rx_trace,
+  .error_counters = oct_rx_node_counters,
+  .n_error_counters = ARRAY_LEN (oct_rx_node_counters),
 };
 
 vnet_dev_node_t oct_tx_node = {
@@ -60,6 +72,10 @@ static struct
   _ (0xa0f3, O10K_CPT_VF,
      "Marvell Octeon-10 Cryptographic Accelerator Unit VF"),
   _ (0xa0fe, O9K_CPT_VF, "Marvell Octeon-9 Cryptographic Accelerator Unit VF"),
+  _ (0xa0f0, RVU_INL_PF,
+     "Marvell Octeon Resource Virtualization Unit Inline Device PF"),
+  _ (0xa0f1, RVU_INL_VF,
+     "Marvell Octeon Resource Virtualization Unit Inline Device VF"),
 #undef _
 };
 
@@ -78,6 +94,36 @@ static vnet_dev_arg_t oct_port_args[] = {
     .type = VNET_DEV_ARG_END,
   },
 };
+
+clib_error_t *
+oct_inl_inb_ipsec_flow_enable (void)
+{
+  oct_inl_dev_main_t *inl_main = &oct_inl_dev_main;
+  vnet_dev_main_t *dm = &vnet_dev_main;
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_flow_t flow = { 0 };
+  u32 flow_index = ~0;
+
+  if (inl_main->is_inl_ipsec_flow_enabled)
+    return NULL;
+
+  pool_foreach_pointer (port, dm->ports_by_dev_instance)
+    {
+      clib_memset (&flow, 0, sizeof (vnet_flow_t));
+
+      flow.index = ~0;
+      flow.actions = VNET_FLOW_ACTION_REDIRECT_TO_QUEUE;
+      flow.type = VNET_FLOW_TYPE_IP4_IPSEC_ESP;
+      flow.ip4_ipsec_esp.spi = 0;
+      flow.redirect_queue = ~0;
+
+      vnet_flow_add (vnm, &flow, &flow_index);
+      vnet_flow_enable (vnm, flow_index, port->intf.hw_if_index);
+    }
+
+  inl_main->is_inl_ipsec_flow_enabled = 1;
+  return NULL;
+}
 
 static u8 *
 oct_probe (vlib_main_t *vm, vnet_dev_bus_index_t bus_index, void *dev_info)
@@ -122,10 +168,13 @@ oct_alloc (vlib_main_t *vm, vnet_dev_t *dev)
 static vnet_dev_rv_t
 oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 {
-  oct_device_t *cd = vnet_dev_get_data (dev);
+  oct_main_t *om = &oct_main;
+  oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
+  oct_device_t *cd = vnet_dev_get_data (dev), **oct_dev = 0;
   u8 mac_addr[6];
   int rrv;
   oct_port_t oct_port = {};
+  vnet_dev_rv_t rv;
 
   *cd->nix = (struct roc_nix){
     .reta_sz = ROC_NIX_RSS_RETA_SZ_256,
@@ -139,6 +188,10 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 
   if ((rrv = roc_nix_npc_mac_addr_get (cd->nix, mac_addr)))
     return cnx_return_roc_err (dev, rrv, "roc_nix_npc_mac_addr_get");
+
+  if (oidm->inl_dev)
+    if ((rv = oct_init_nix_inline_ipsec (vm, oidm->vdev, dev)))
+      return rv;
 
   vnet_dev_port_add_args_t port_add_args = {
     .port = {
@@ -177,7 +230,7 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     .rx_queue = {
       .config = {
         .data_size = sizeof (oct_rxq_t),
-        .default_size = 1024,
+        .default_size = 8192,
         .multiplier = 32,
         .min_size = 256,
         .max_size = 16384,
@@ -191,7 +244,7 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     .tx_queue = {
       .config = {
         .data_size = sizeof (oct_txq_t),
-        .default_size = 1024,
+        .default_size = 8192,
         .multiplier = 32,
         .min_size = 256,
         .max_size = 16384,
@@ -208,7 +261,13 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 
   log_info (dev, "MAC address is %U", format_ethernet_address, mac_addr);
 
-  return vnet_dev_port_add (vm, dev, 0, &port_add_args);
+  if ((rv = vnet_dev_port_add (vm, dev, 0, &port_add_args)))
+    return rv;
+
+  pool_get (om->oct_dev, oct_dev);
+  oct_dev = vnet_dev_get_data (dev);
+
+  return VNET_DEV_OK;
 }
 
 static int
@@ -269,6 +328,30 @@ oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd)
     return cnx_return_roc_err (dev, rrv, "roc_cpt_lmtline_init");
 
   return 0;
+}
+
+static vnet_dev_rv_t
+oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
+{
+  extern oct_plt_init_param_t oct_plt_init_param;
+  oct_device_t *od = vnet_dev_get_data (dev);
+  oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
+  vnet_dev_rv_t rv;
+
+  oidm->inl_dev = oct_plt_init_param.oct_plt_zmalloc (
+    sizeof (struct roc_nix_inl_dev), CLIB_CACHE_LINE_BYTES);
+  oidm->inl_dev->pci_dev = &od->plt_pci_dev;
+  oidm->vdev = dev;
+
+  if ((rv = oct_early_init_inline_ipsec (vm, dev)))
+    return rv;
+  if ((rv = oct_init_ipsec_backend (vm, dev)))
+    return rv;
+
+  oct_main.use_single_rx_aura = 1;
+  oct_main.inl_dev_initialized = 1;
+
+  return VNET_DEV_OK;
 }
 
 static vnet_dev_rv_t
@@ -384,6 +467,10 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
     case OCT_DEVICE_TYPE_O9K_CPT_VF:
       return oct_init_cpt (vm, dev);
 
+    case OCT_DEVICE_TYPE_RVU_INL_PF:
+    case OCT_DEVICE_TYPE_RVU_INL_VF:
+      return oct_init_inl_dev (vm, dev);
+
     default:
       return VNET_DEV_ERR_UNSUPPORTED_DEVICE;
     }
@@ -461,12 +548,21 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
 
+  oct_inl_dev_main.in_min_spi = 0;
+  oct_inl_dev_main.in_max_spi = 8192;
+
   if (!unformat_user (input, unformat_line_input, line_input))
     return 0;
 
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (line_input, "max-pools %u", &oct_npa_max_pools))
+	;
+      else if (unformat (line_input, "ipsec_in_min_spi %u",
+			 &oct_inl_dev_main.in_min_spi))
+	;
+      else if (unformat (line_input, "ipsec_in_max_spi %u",
+			 &oct_inl_dev_main.in_max_spi))
 	;
       else
 	{
