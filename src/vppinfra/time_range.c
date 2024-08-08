@@ -272,6 +272,19 @@ format_clib_timebase_time (u8 * s, va_list * args)
   return (s);
 }
 
+__clib_export void
+sprintf_clib_timebase_time (u8 *s, f64 now)
+{
+  clib_timebase_component_t _c, *cp = &_c;
+
+  clib_timebase_time_to_components (now, cp);
+
+  sprintf ((char *) s, "%s, %u %s %u %u:%02u:%02u",
+	   day_names_epoch_order[cp->day_name_index], cp->day,
+	   month_short_names[cp->month], cp->year, cp->hour, cp->minute,
+	   cp->second);
+}
+
 uword
 unformat_clib_timebase_range_hms (unformat_input_t * input, va_list * args)
 {

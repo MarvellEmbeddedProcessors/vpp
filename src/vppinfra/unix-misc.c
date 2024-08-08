@@ -50,8 +50,8 @@
 __clib_export __thread uword __os_thread_index = 0;
 __clib_export __thread uword __os_numa_index = 0;
 
-clib_error_t *
-clib_file_n_bytes (char *file, uword * result)
+__clib_export clib_error_t *
+clib_file_n_bytes (char *file, uword *result)
 {
   struct stat s;
 

@@ -68,6 +68,8 @@ unformat_function_t unformat_clib_timebase_range_hms;
 unformat_function_t unformat_clib_timebase_range_vector;
 
 format_function_t format_clib_timebase_time;
+void sprintf_clib_timebase_time (u8 *s, f64 now);
+#define CLIB_TIMEBASE_STR_MAX_SZ 60
 
 static inline f64 clib_timebase_summer_offset_fastpath
   (clib_timebase_t * tb, f64 now)
