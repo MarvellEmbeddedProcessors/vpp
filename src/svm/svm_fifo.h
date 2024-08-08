@@ -811,6 +811,8 @@ svm_fifo_clear_deq_ntf (svm_fifo_t * f)
     clib_atomic_store_rel_n (&f->shr->has_deq_ntf, 1);
   if (want_deq_ntf & SVM_FIFO_WANT_DEQ_NOTIF)
     svm_fifo_del_want_deq_ntf (f, SVM_FIFO_WANT_DEQ_NOTIF);
+  if (want_deq_ntf & SVM_FIFO_WANT_DEQ_NOTIF_IF_EMPTY)
+    svm_fifo_del_want_deq_ntf (f, SVM_FIFO_WANT_DEQ_NOTIF_IF_EMPTY);
 }
 
 /**

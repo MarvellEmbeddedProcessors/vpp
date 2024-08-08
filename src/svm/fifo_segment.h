@@ -143,6 +143,14 @@ svm_fifo_t *fifo_segment_alloc_fifo_w_offset (fifo_segment_t *fs,
 svm_fifo_t *fifo_segment_duplicate_fifo (fifo_segment_t *fs, svm_fifo_t *f);
 
 /**
+ * Shrink fifo allocated in fifo segment
+ *
+ * @param fs		fifo segment for fifo
+ * @param f		fifo to be shrinked
+ */
+void fifo_segment_shrink_fifo (fifo_segment_t *fs, svm_fifo_t *f);
+
+/**
  * Free fifo allocated in fifo segment
  *
  * @param fs		fifo segment for fifo
