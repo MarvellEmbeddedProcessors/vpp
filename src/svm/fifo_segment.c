@@ -918,6 +918,44 @@ fifo_segment_duplicate_fifo (fifo_segment_t *fs, svm_fifo_t *f)
 }
 
 /**
+ * Shrink fifo allocated in fifo segment
+ */
+void
+fifo_segment_shrink_fifo (fifo_segment_t *fs, svm_fifo_t *f)
+{
+  fifo_segment_header_t *fsh = fs->h;
+  fifo_segment_slice_t *fss;
+  svm_fifo_shared_t *sf;
+  svm_fifo_chunk_t *c;
+
+  ASSERT (f->refcnt > 0);
+
+  /* Do not try to shrink buffers if the FIFO contains data */
+  if (!svm_fifo_is_empty (f))
+    return;
+
+  sf = f->shr;
+  fss = fsh_slice_get (fsh, sf->slice_index);
+
+  /* Free fifo chunks */
+  fsh_slice_collect_chunks (fsh, fss, fs_chunk_ptr (fsh, f->shr->start_chunk));
+
+  sf->start_chunk = sf->end_chunk = 0;
+  sf->head_chunk = sf->tail_chunk = 0;
+
+  c = fsh_try_alloc_chunk (fsh, fss, 0);
+  if (!c)
+    return;
+
+  sf->head_chunk = sf->start_chunk = fs_chunk_sptr (fsh, c);
+  while (c->next)
+    c = fs_chunk_ptr (fsh, c->next);
+  sf->tail_chunk = sf->end_chunk = fs_chunk_sptr (fsh, c);
+
+  svm_fifo_set_size (f, 0);
+}
+
+/**
  * Free fifo allocated in fifo segment
  */
 void
