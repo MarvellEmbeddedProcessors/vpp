@@ -4,10 +4,10 @@
 DAO_DEBUG                   ?= n
 octeon-dao_version             := 24.05.2
 octeon-dao_tarball             := $(octeon-dao_version).tar.gz
-octeon-dao_tarball_md5sum      := d052c1bf98b232c149aad250d6cab1f6
+octeon-dao_tarball_md5sum      := a06dda68ab8cb91734c305fc17e2a5ae
 
 octeon-dao_tarball_strip_dirs  := 1
-octeon-dao_url                 := https://github.com/MarvellEmbeddedProcessors/dpu-accelerator-offload/archive/refs/tags/$(octeon-dao_tarball)
+octeon-dao_url                 := https://github.com/MarvellEmbeddedProcessors/dao/archive/refs/tags/$(octeon-dao_tarball)
 
 octeon_dao_cmake_args ?=
 
