@@ -465,6 +465,12 @@ M:	Dave Barach <vpp@barachs.net>
 M:	Florin Coras <fcoras@cisco.com>
 F:	src/plugins/http_static/
 
+Plugin - http_static l4
+I:      http_static_l4
+M:      Dave Barach <vpp@barachs.net>
+M:      Florin Coras <fcoras@cisco.com>
+F:      src/plugins/http_static_l4/
+
 Plugin - builtinurl
 I:	builtinurl
 M:	Dave Barach <vpp@barachs.net>
