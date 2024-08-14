@@ -150,7 +150,6 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
   u16 virtio_hdr_sz = 0;
 
   virtio_hdr_sz = oct_virtio_netdev_hdrlen_get (virtio_devid);
-  ptd[ptd->service_core].q_map[virtio_devid].virtio_hdr_sz = virtio_hdr_sz;
 
   virt_rx_q = virt_q_count / 2;
   q_id = 0;
@@ -160,7 +159,6 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
 	cpu_id++;
 
       ptd[cpu_id].q_map[virtio_devid].qmap |= DAO_BIT_ULL (q_id);
-      ptd[cpu_id].q_map[virtio_devid].virtio_hdr_sz = virtio_hdr_sz;
       CLIB_MEMORY_BARRIER ();
       ptd[cpu_id].netdev_map |= DAO_BIT (virtio_devid);
 
@@ -172,6 +170,9 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
 	  wrkr_cpu_mask = ovm->wrkr_cpu_mask;
 	}
     }
+
+  for (cpu_id = 0; cpu_id < DAO_PAL_MAX_WORKERS; cpu_id++)
+    ptd[cpu_id].q_map[virtio_devid].virtio_hdr_sz = virtio_hdr_sz;
 
   ovm->netdev_qp_count[virtio_devid] = virt_q_count / 2;
   CLIB_MEMORY_BARRIER ();

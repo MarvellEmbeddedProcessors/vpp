@@ -226,18 +226,6 @@ oct_virtio_parse_arguments (dao_pal_global_conf_t *conf, vnet_dev_arg_t *args)
     }
 }
 
-static void
-oct_dev_virtio_mac_addr_get (u16 dev_id, u8 mac_addr[])
-{
-  mac_addr[0] = 0x00;
-  mac_addr[1] = 0x0f;
-  mac_addr[2] = 0xb7;
-  mac_addr[3] = 0x11;
-  mac_addr[4] = (dev_id & PEM_PFVF_DEV_ID_VF_MASK) >> PEM_PFVF_DEV_ID_PF_SHIFT;
-  mac_addr[5] =
-    ((dev_id & PEM_PFVF_DEV_ID_VF_MASK) >> PEM_PFVF_DEV_ID_VF_SHIFT) + 1;
-}
-
 static vnet_dev_rv_t
 oct_virtio_init (vlib_main_t *vm, vnet_dev_t *dev)
 {
@@ -304,7 +292,7 @@ oct_virtio_init (vlib_main_t *vm, vnet_dev_t *dev)
       oct_virtio_main->dao_lib_initialized = 1;
     }
 
-  oct_dev_virtio_mac_addr_get (bus_data->virtio_dev.virtio_id, mac_addr);
+  ethernet_mac_address_generate (mac_addr);
 
   device_data->virtio_id = bus_data->virtio_dev.virtio_id;
   ovp.virtio_id = bus_data->virtio_dev.virtio_id;
