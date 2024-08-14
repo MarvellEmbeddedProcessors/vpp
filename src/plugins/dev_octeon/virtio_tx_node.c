@@ -13,21 +13,44 @@
 #include <vnet/udp/udp_packet.h>
 #include <vnet/tcp/tcp_packet.h>
 #include <dev_octeon/oct_virtio.h>
+#define OCT_VIRT_MAX_FRAGS 6
 
 extern oct_virtio_main_t *oct_virtio_main;
 extern oct_virtio_per_thread_data_t *oct_virt_thread_data;
 
-static_always_inline u32
-oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
-		    u16 virtio_devid)
+static_always_inline void
+oct_virt_free_to_vlib (vlib_main_t *vm, vlib_node_runtime_t *node,
+		       void *virt_b[], u16 nb_free, u16 hdr_len)
 {
-  int idx = 0;
+  u16 idx = 0;
+  vlib_buffer_t *b;
+  u32 b_index;
+
+  while (idx < nb_free)
+    {
+      b = oct_virt_to_bp (virt_b[idx], hdr_len);
+      b_index = vlib_get_buffer_index (vm, b);
+      vlib_buffer_free_no_next (vm, &b_index, 1);
+      idx++;
+    }
+
+  vlib_error_count (vm, node->node_index, OCT_VIRT_TX_NODE_CTR_ENQUE_FAIL,
+		    nb_free);
+}
+
+static_always_inline u32
+oct_virtio_enqueue (vlib_main_t *vm, vlib_node_runtime_t *node,
+		    vlib_buffer_t **b, u16 nb_pkts, u16 virtio_devid)
+{
+  vlib_buffer_t *bp;
+  bool next_present;
   u64 tx_q_map, q_map;
+  u16 idx = 0, nb_frags = 0;
   u32 cpu_id = vm->cpu_id;
   u16 nb_pkts_left = nb_pkts, hdr_len;
   u16 queue, virt_q, sent = 0, cur_sent = 0;
-  void *virt_b[VLIB_FRAME_SIZE];
-  struct dao_virtio_net_hdr *v_hdr[4];
+  void *virt_b[VLIB_FRAME_SIZE * OCT_VIRT_MAX_FRAGS];
+  struct dao_virtio_net_hdr *v_hdr[4], *head;
   struct dao_virtio_net_hdr vhdr_init = { 0 };
   oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
 
@@ -37,6 +60,13 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
 
   while (nb_pkts >= 8)
     {
+      next_present = b[0]->flags & VLIB_BUFFER_NEXT_PRESENT ||
+		     b[1]->flags & VLIB_BUFFER_NEXT_PRESENT ||
+		     b[2]->flags & VLIB_BUFFER_NEXT_PRESENT ||
+		     b[3]->flags & VLIB_BUFFER_NEXT_PRESENT;
+      if (PREDICT_FALSE (next_present))
+	break;
+
       v_hdr[0] = oct_bp_to_virt (b[0], hdr_len);
       v_hdr[1] = oct_bp_to_virt (b[1], hdr_len);
       v_hdr[2] = oct_bp_to_virt (b[2], hdr_len);
@@ -85,20 +115,31 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
 
   while (nb_pkts)
     {
-      v_hdr[0] = oct_bp_to_virt (b[0], hdr_len);
-      *v_hdr[0] = vhdr_init;
-      v_hdr[0]->hdr.num_buffers = 1;
-      virt_b[idx] = (void *) v_hdr[0];
-      v_hdr[0]->desc_data[1] = b[0]->current_length;
-      /* Number of bytes deviates (+/-) from vlib buffer current data */
-      v_hdr[0]->desc_data[0] = ~b[0]->current_data + 1;
+      bp = b[0];
+      head = oct_bp_to_virt (bp, hdr_len);
+      do
+	{
+	  v_hdr[0] = oct_bp_to_virt (bp, hdr_len);
+	  *v_hdr[0] = vhdr_init;
+	  virt_b[idx] = (void *) v_hdr[0];
+	  v_hdr[0]->desc_data[1] = bp->current_length;
+	  /* Number of bytes deviates (+/-) from vlib buffer current data */
+	  v_hdr[0]->desc_data[0] = ~bp->current_data + 1;
+	  next_present = bp->flags & VLIB_BUFFER_NEXT_PRESENT;
+	  v_hdr[0]->hdr.num_buffers = 1;
+	  idx++;
+	  nb_frags++;
+	}
+      while (next_present && (bp = vlib_get_buffer (vm, bp->next_buffer)));
 
+      head->hdr.num_buffers = nb_frags;
       b++;
-      idx++;
       nb_pkts--;
+      nb_frags = 0;
     }
 
   queue = ptd[cpu_id].q_map[virtio_devid].last_tx_q;
+  nb_pkts_left = idx;
 
   while (tx_q_map && nb_pkts_left)
     {
@@ -117,7 +158,11 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_buffer_t **b, u16 nb_pkts,
       if (DAO_BIT (queue) > q_map)
 	queue = 0;
     }
+
   ptd[cpu_id].q_map[virtio_devid].last_tx_q = queue;
+
+  if (PREDICT_FALSE (nb_pkts_left))
+    oct_virt_free_to_vlib (vm, node, &virt_b[sent], nb_pkts_left, hdr_len);
 
   /* Flush and submit DMA ops */
   dao_dma_flush_submit ();
@@ -171,14 +216,7 @@ VNET_DEV_NODE_FN (oct_virtio_tx_node)
   if (PREDICT_FALSE (node->flags & VLIB_NODE_FLAG_TRACE))
     oct_virtio_trace_buffers (vm, node, ovp, b, n_pkts, virtio_id);
 
-  n_tx_pkts = oct_virtio_enqueue (vm, b, n_pkts, virtio_id);
-  if (n_tx_pkts < n_pkts)
-    {
-      u32 n_free = n_pkts - n_tx_pkts;
-      vlib_buffer_free_no_next (vm, from + n_tx_pkts, n_free);
-      vlib_error_count (vm, node->node_index, OCT_VIRT_TX_NODE_CTR_ENQUE_FAIL,
-			n_free);
-    }
+  n_tx_pkts = oct_virtio_enqueue (vm, node, b, n_pkts, virtio_id);
 
   return n_tx_pkts;
 }
