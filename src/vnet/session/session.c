@@ -284,6 +284,12 @@ session_program_cleanup (session_t *s)
   session_cleanup_notify (s, SESSION_CLEANUP_SESSION);
 }
 
+void
+session_shrink_fifos (session_t *s)
+{
+  segment_manager_shrink_fifos (s->rx_fifo, s->tx_fifo);
+}
+
 /**
  * Cleans up session and lookup table.
  *
