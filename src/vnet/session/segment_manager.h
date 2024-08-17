@@ -148,6 +148,7 @@ int segment_manager_try_alloc_fifos (fifo_segment_t * fs,
 				     u32 rx_fifo_size, u32 tx_fifo_size,
 				     svm_fifo_t ** rx_fifo,
 				     svm_fifo_t ** tx_fifo);
+void segment_manager_shrink_fifos (svm_fifo_t *rx_fifo, svm_fifo_t *tx_fifo);
 void segment_manager_dealloc_fifos (svm_fifo_t * rx_fifo,
 				    svm_fifo_t * tx_fifo);
 void segment_manager_detach_fifo (segment_manager_t *sm, svm_fifo_t **f);

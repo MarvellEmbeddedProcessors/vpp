@@ -2252,6 +2252,11 @@ tcp46_rcv_process_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  tcp_timer_set (&wrk->timer_wheel, tc, TCP_TIMER_WAITCLOSE,
 			 tcp_cfg.timewait_time);
 	  session_transport_closed_notify (&tc->connection);
+	  /* Shrink FIFOs */
+	  session_t *s = session_get_if_valid (tc->connection.s_index,
+					       tc->connection.thread_index);
+	  if (s)
+	    session_shrink_fifos (s);
 	  goto drop;
 
 	  break;
@@ -2389,6 +2394,11 @@ tcp46_rcv_process_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 			 tcp_cfg.timewait_time);
 	  tcp_program_ack (tc);
 	  session_transport_closed_notify (&tc->connection);
+	  /* Shrink FIFOs */
+	  session_t *s = session_get_if_valid (tc->connection.s_index,
+					       tc->connection.thread_index);
+	  if (s)
+	    session_shrink_fifos (s);
 	  break;
 	case TCP_STATE_TIME_WAIT:
 	  /* Remain in the TIME-WAIT state. Restart the time-wait

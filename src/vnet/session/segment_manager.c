@@ -854,6 +854,30 @@ segment_manager_alloc_session_fifos (segment_manager_t * sm,
 }
 
 void
+segment_manager_shrink_fifos (svm_fifo_t *rx_fifo, svm_fifo_t *tx_fifo)
+{
+  segment_manager_t *sm;
+  fifo_segment_t *fs;
+  u32 segment_index;
+
+  if (!rx_fifo || !tx_fifo)
+    return;
+
+  /*
+   * It's possible to have no segment manager if the session was removed
+   * as result of a detach.
+   */
+  if (!(sm = segment_manager_get_if_valid (rx_fifo->segment_manager)))
+    return;
+
+  segment_index = rx_fifo->segment_index;
+  fs = segment_manager_get_segment_w_lock (sm, segment_index);
+  fifo_segment_shrink_fifo (fs, rx_fifo);
+  fifo_segment_shrink_fifo (fs, tx_fifo);
+  segment_manager_segment_reader_unlock (sm);
+}
+
+void
 segment_manager_dealloc_fifos (svm_fifo_t * rx_fifo, svm_fifo_t * tx_fifo)
 {
   segment_manager_t *sm;
