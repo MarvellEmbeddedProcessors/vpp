@@ -20,8 +20,7 @@ DAO_MESON_ARGS = \
 	--default-library static \
 	-Dprefer_static=True \
 	--buildtype=$(DAO_BUILD_TYPE)\
-        -Denable_kmods=false\
-	-Dc_link_args='-lnuma'
+        -Denable_kmods=false
 
 PREFIX = $(CNXK_SDK_SYSROOT)
 ifeq (,$(findstring $(OCTEON_VERSION),cn10k cn9k))
