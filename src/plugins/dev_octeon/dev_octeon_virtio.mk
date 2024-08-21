@@ -24,9 +24,18 @@ if (NOT DAO_PAL_LIB OR NOT DAO_VIRT_LIB OR NOT DAO_VIRT_NET_LIB OR NOT DAO_VFIO_
   return()
 endif()
 
-set (DAO_LIBS ${DAO_PAL_LIB} ${DAO_VIRT_LIB} ${DAO_VIRT_NET_LIB} ${DAO_VFIO_LIB} ${DAO_PEM_LIB} ${DAO_COMM_LIB} ${DAO_DPDK_LIB})
-
 unset(DAO_LINK_FLAGS)
+
+get_filename_component(DAO_DPDK_LIB_DIR ${DAO_DPDK_LIB} DIRECTORY)
+
+link_directories(${DAO_DPDK_LIB_DIR})
+string_append(DAO_LINK_FLAGS "-L${DAO_DPDK_LIB_DIR}")
+string_append(DAO_LINK_FLAGS "-lnuma -lz -lelf -lpcap -ljansson")
+if(OPENSSL_FOUND)
+  string_append(DAO_LINK_FLAGS "-lssl")
+  string_append(DAO_LINK_FLAGS "-lcrypto")
+endif()
+
 string_append(DAO_LINK_FLAGS "-Wl,--whole-archive,${DAO_PAL_LIB},${DAO_VIRT_LIB},${DAO_VIRT_NET_LIB},${DAO_VFIO_LIB},${DAO_PEM_LIB},${DAO_COMM_LIB},${DAO_DPDK_LIB},--no-whole-archive")
 
 include_directories (${DAO_NETDEV_INCLUDE_DIR}/)
