@@ -104,9 +104,11 @@ struct engine_polling
 };
 
 void qat_init_thread (void *arg);
+void dpdk_engine_init_thread (void *arg);
 
 struct engine_polling engine_list[] = {
   { "qat", qat_polling, qat_pre_init, qat_init_thread },
+  { "dpdk_engine", dasync_polling, NULL, dpdk_engine_init_thread },
   { "dasync", dasync_polling, NULL, NULL }
 };
 
@@ -607,6 +609,33 @@ tls_resume_from_crypto (int thread_index)
   resume_read_write_events (thread_index);
   resume_handshake_events (thread_index);
   return 0;
+}
+
+void
+dpdk_engine_init_thread (void *arg)
+{
+  vlib_main_t *vm = vlib_get_main ();
+  tls_main_t *tm = vnet_tls_get_main ();
+  void *handle = NULL;
+
+  if (tm && tm->engine_path)
+    handle = dlopen ((char *) tm->engine_path, RTLD_LAZY);
+
+  if (!handle)
+    {
+      clib_warning ("dpdk engline library not found");
+      return;
+    }
+
+  u64 *(*fn) () = dlsym (handle, "dpdk_rte_thread_register");
+
+  if (fn)
+    {
+      if (fn () < 0)
+	clib_warning ("dpdk: cannot register thread %u", vm->thread_index);
+    }
+  else
+    clib_warning ("dpdk_rte_thread_register symbol not found");
 }
 
 static clib_error_t *
