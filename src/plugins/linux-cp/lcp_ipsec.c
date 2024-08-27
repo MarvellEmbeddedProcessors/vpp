@@ -918,7 +918,7 @@ nl_xfrm_sa_add (struct xfrmnl_sa *sa)
 
   if (xfrmnl_sa_get_flags (sa) & XFRM_STATE_ESN)
     {
-      flags |= IPSEC_SA_FLAG_USE_ESN;
+      flags |= IPSEC_SA_FLAG_USE_ESN | IPSEC_SA_FLAG_USE_ANTI_REPLAY;
     }
   /*
    * Kernel SA XFRM doesnt have a flag for AR config. So a non-zero
