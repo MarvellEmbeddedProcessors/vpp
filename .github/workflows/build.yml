@@ -49,8 +49,9 @@ jobs:
           mkdir -p "${PWD}/artifacts"
           git tag --points-at HEAD > /tmp/tags
           [ -s /tmp/tags ] && PKG_POSTFIX= || PKG_POSTFIX=-devel
+          FW_PKG_POSTFIX=""
           if [ $PKG_POSTFIX = -devel ]; then
-            FW_PKG_POSTFIX=
+            FW_PKG_POSTFIX=""
           else
             FW_PKG_POSTFIX=$PKG_POSTFIX
           fi
