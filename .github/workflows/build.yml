@@ -64,9 +64,8 @@ jobs:
           echo "PKG_POSTFIX=${PKG_POSTFIX}" >> "${PWD}/artifacts/env"
           source "${PWD}/artifacts/env"
           echo "NIGHTLY=${NIGHTLY}" >> $GITHUB_OUTPUT
-          echo "PKG_VERSION_NAME=${PKG_VERSION_NAME}" >> $GITHUB_OUTPUT
-          echo "MRVL_PKG_VERSION=${MRVL_PKG_VERSION}" >> $GITHUB_OUTPUT
           echo "DPDK_PKG_VERSION=${DPDK_PKG_VERSION}" >> $GITHUB_OUTPUT
+          echo "DPDK_BASE_PKG_VERSION=${DPDK_BASE_PKG_VERSION}" >> $GITHUB_OUTPUT
       - uses: uraimo/run-on-arch-action@v2.7.2
         name: Build VPP and generate package
         id: build
@@ -129,9 +128,11 @@ jobs:
             apt-get install -y libconfuse-dev libelf-dev libffi7 libmnl-dev libnl-3-dev libnl-route-3-dev
             apt-get install -y libnuma-dev libpcap-dev libssl-dev nasm ninja-build python3-all python3-dev
             apt-get install -y python3-jsonschema python3-pip python3-ply python3-setuptools python3-venv
-            apt-get install -y python3-virtualenv tshark
+            apt-get install -y python3-virtualenv tshark lsb-release
           run: |
             source /artifacts/env
+            DISTRO=ubuntu-`lsb_release -rs`
+            echo "DISTRO=${DISTRO}" >> /artifacts/env
             echo "cache_dir = /root/.ccache" > /root/.ccache/ccache.conf
             ccache -p
             git config --global --add safe.directory "${PWD}"
@@ -159,6 +160,8 @@ jobs:
           echo "PKG_VERSION_NAME=${PKG_VERSION_NAME}" >> "$GITHUB_OUTPUT"
           echo $MRVL_PKG_VERSION
           echo "MRVL_PKG_VERSION=${MRVL_PKG_VERSION}" >> "$GITHUB_OUTPUT"
+          echo $DISTRO
+          echo "DISTRO=${DISTRO}" >> "$GITHUB_OUTPUT"
           echo $PKG_POSTFIX
           echo "PKG_POSTFIX=${PKG_POSTFIX}" >> "$GITHUB_OUTPUT"
           [[ "$PKG_POSTFIX" == "-devel" ]] && TAG=devel || TAG=${PKG_VERSION_NAME}
@@ -169,11 +172,21 @@ jobs:
         with:
           name: vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-cn10k${{ steps.artifacts.outputs.PKG_POSTFIX }}_${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}_arm64.deb
           path: ${{ github.workspace }}/artifacts/vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-cn10k${{ steps.artifacts.outputs.PKG_POSTFIX }}_${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}_arm64.deb
+      - name: Delete existing release
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}-${{ steps.artifacts.outputs.DISTRO }}-${{ steps.artifacts.outputs.TAG }}; then
+            gh release delete vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}-${{ steps.artifacts.outputs.DISTRO }}-${{ steps.artifacts.outputs.TAG }} --cleanup-tag -y
+          else
+            echo "Release not found"
+          fi
       - name: Release VPP cn10k package
         uses: softprops/action-gh-release@v2.0.4
         if: ${{ github.event_name == 'push' }}
         with:
-          tag_name: ${{ steps.artifacts.outputs.TAG }}
+          tag_name: vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}-${{ steps.artifacts.outputs.DISTRO }}-${{ steps.artifacts.outputs.TAG }}
           files: |
             ${{ github.workspace }}/artifacts/vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-cn10k${{ steps.artifacts.outputs.PKG_POSTFIX }}_${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}_arm64.deb
       - name: Dispatch package update event
@@ -185,4 +198,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.PPA_REPO_SECRET }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/marvellembeddedprocessors/packages/dispatches \
-            -d '{"event_type":"dispatch-event", "client_payload": {"package" : "vpp", "tag": "${{ steps.artifacts.outputs.TAG }}", "dpdk_tag" : "${{ steps.version.outputs.DPDK_PKG_VERSION }}", "has_dpdk" : "true"}}'
+            -d '{"event_type":"dispatch-event", "client_payload": {"package" : "vpp",
+            "tag": "vpp-${{ steps.artifacts.outputs.PKG_VERSION_NAME }}-${{ steps.artifacts.outputs.MRVL_PKG_VERSION }}-${{ steps.artifacts.outputs.DISTRO }}-${{ steps.artifacts.outputs.TAG }}",
+            "dpdk_tag" : "dpdk-${{ steps.version.outputs.DPDK_BASE_PKG_VERSION }}_${{ steps.version.outputs.DPDK_PKG_VERSION }}-${{ steps.artifacts.outputs.DISTRO }}-${{ steps.version.outputs.DPDK_PKG_VERSION }}",
+            "has_dpdk" : "true", "distro" : "${{ steps.artifacts.outputs.DISTRO }}"}}'
