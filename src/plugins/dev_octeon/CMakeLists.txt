@@ -23,6 +23,7 @@ if (NOT OCTEON_ROC_DIR OR NOT OCTEON_ROC_LIB)
 endif()
 
 include_directories (${OCTEON_ROC_DIR}/)
+include_directories (${CMAKE_CURRENT_SOURCE_DIR}/dpu/)
 
 if (VPP_PLATFORM_NAME STREQUAL "octeon9")
    add_compile_definitions(PLATFORM_OCTEON9)
@@ -42,6 +43,7 @@ add_vpp_plugin(dev_octeon
   counter.c
   crypto.c
   ipsec.c
+  dpu/dpu.c
 
   MULTIARCH_SOURCES
   rx_node.c
