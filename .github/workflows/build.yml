@@ -164,7 +164,7 @@ jobs:
           echo "DISTRO=${DISTRO}" >> "$GITHUB_OUTPUT"
           echo $PKG_POSTFIX
           echo "PKG_POSTFIX=${PKG_POSTFIX}" >> "$GITHUB_OUTPUT"
-          [[ "$PKG_POSTFIX" == "-devel" ]] && TAG=devel || TAG=${PKG_VERSION_NAME}
+          [[ "$PKG_POSTFIX" == "-devel" ]] && TAG=devel || TAG=${MRVL_PKG_VERSION}
           echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
       - name: Upload debian package as artifact
         uses: actions/upload-artifact@v4.3.1
