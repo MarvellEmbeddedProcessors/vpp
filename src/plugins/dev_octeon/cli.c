@@ -125,6 +125,10 @@ oct_crypto_counters_command_fn (vlib_main_t *vm, unformat_input_t *input,
   counter_t *counters = NULL;
   u32 n_threads = vlib_get_n_threads ();
 
+  if (!ocm->n_cpt)
+    return clib_error_create (
+      "No Crypto device attached to dev-octeon plugin");
+
 #define _(i, s, d)                                                            \
   cm = &ocm->s##_counter;                                                     \
   vec_validate_init_empty (stat[i], n_threads, 0);                            \
@@ -176,6 +180,10 @@ oct_crypto_counters_clear_command_fn (vlib_main_t *vm, unformat_input_t *input,
 {
   vlib_simple_counter_main_t *cm;
   oct_crypto_main_t *ocm = &oct_crypto_main;
+
+  if (!ocm->n_cpt)
+    return clib_error_create (
+      "No Crypto device attached to dev-octeon plugin");
 
 #define _(i, s, d)                                                            \
   cm = &ocm->s##_counter;                                                     \
