@@ -96,9 +96,9 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
     vlib_get_buffer_pool (vm, vnet_dev_get_rx_queue_buffer_pool_index (rxq));
   struct roc_nix *nix = cd->nix;
   int rrv;
-
   struct npa_aura_s aura = {};
-  struct npa_pool_s npapool = { .nat_align = 1 };
+  struct npa_pool_s npapool = { .nat_align = 1,
+				.buf_offset = OCT_EXT_HDR_SIZE / ROC_ALIGN };
 
   if (!om->use_single_rx_aura || !om->aura_handle)
     {
@@ -257,6 +257,7 @@ oct_txq_init (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
   ctq->io_addr = ctq->sq.io_addr & ~0x7fULL;
   ctq->lmt_addr = ctq->sq.lmt_addr;
 
+  cd->ctqs[ctq->sq.qid] = ctq;
   return VNET_DEV_OK;
 }
 

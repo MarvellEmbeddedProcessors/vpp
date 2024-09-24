@@ -7,8 +7,9 @@
 #ifndef _OCTEON_IPSEC_H_
 #define _OCTEON_IPSEC_H_
 
-#define OCT_ROC_SALT_LEN      4
-#define OCT_IPSEC_MAX_SESSION 3600
+#define OCT_ROC_SALT_LEN 4
+#define OCT_EXT_HDR_FROM_VLIB_BUFFER(x)                                       \
+  (((oct_ipsec_outbound_pkt_meta_t *) (x)) - 1)
 
 #define foreach_octeon10_ipsec_ucc                                            \
   _ (SUCCESS, success, INFO, "Packet successfully processed")                 \
@@ -69,6 +70,21 @@
 
 typedef struct
 {
+  CLIB_CACHE_LINE_ALIGN_MARK (c0);
+  struct cpt_inst_s inst;
+  union cpt_res_s res;
+  u16 dlen_adj;
+  u16 sa_bytes;
+  u8 core_id;
+  u8 is_ip6;
+  bool is_sg_mode;
+  CLIB_CACHE_LINE_ALIGN_MARK (c2);
+  u64 nixtx[2];
+  u8 sg_buffer[128];
+} oct_ipsec_outbound_pkt_meta_t;
+
+typedef struct
+{
   uint8_t partial_len;
   uint8_t roundup_len;
   uint8_t footer_len;
@@ -83,9 +99,15 @@ typedef struct
 
 typedef struct
 {
+  /* SA index */
+  u32 sa_idx;
+} oct_ipsec_outb_sa_priv_data_t;
+
+typedef struct
+{
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
   /* Outbound SA */
-  struct roc_ot_ipsec_outb_sa out_sa;
+  struct roc_ot_ipsec_outb_sa **out_sa;
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
   struct cpt_inst_s inst;
   uint16_t iv_offset;
@@ -104,6 +126,8 @@ typedef struct
 
 typedef struct
 {
+  u32 outb_nb_desc;
+  u16 outb_nb_crypto_qs;
 } oct_inl_dev_cfg_t;
 
 typedef struct
@@ -117,6 +141,7 @@ typedef struct
   u8 is_inl_ipsec_flow_enabled;
   u32 in_min_spi;
   u32 in_max_spi;
+  u32 out_max_sa;
 } oct_inl_dev_main_t;
 
 extern oct_ipsec_main_t oct_ipsec_main;
@@ -127,6 +152,7 @@ vnet_dev_rv_t oct_init_ipsec_backend (vlib_main_t *vm, vnet_dev_t *dev);
 vnet_dev_rv_t oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev);
 vnet_dev_rv_t oct_init_nix_inline_ipsec (vlib_main_t *vm, vnet_dev_t *inl_dev,
 					 vnet_dev_t *dev);
+void *oct_ipsec_get_oct_device_from_outb_sa (u32 sa_index);
 
 clib_error_t *oct_inl_inb_ipsec_flow_enable (void);
 
