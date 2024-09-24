@@ -234,6 +234,14 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 	  return rv;
 	}
 
+  cd->ctqs = clib_mem_alloc_aligned (
+    sizeof (oct_txq_t *) * port->intf.num_tx_queues, CLIB_CACHE_LINE_BYTES);
+  if (!cd->ctqs)
+    {
+      oct_port_deinit (vm, port);
+      return VNET_DEV_ERR_INTERNAL;
+    }
+
   foreach_vnet_dev_port_tx_queue (q, port)
     if (q->enabled)
       if ((rv = oct_txq_init (vm, q)))

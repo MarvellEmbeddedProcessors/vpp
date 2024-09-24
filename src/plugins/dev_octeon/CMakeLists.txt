@@ -43,6 +43,7 @@ add_vpp_plugin(dev_octeon
   counter.c
   crypto.c
   ipsec.c
+  esp_encrypt.c
   dpu/dpu.c
   tm.c
 
