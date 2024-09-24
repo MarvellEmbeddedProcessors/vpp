@@ -51,6 +51,12 @@ vnet_dev_node_t oct_tx_node = {
   .n_error_counters = ARRAY_LEN (oct_tx_node_counters),
 };
 
+vnet_dev_node_t oct_tx_ipsec_tm_node = {
+  .format_trace = format_oct_tx_trace,
+  .error_counters = oct_tx_node_counters,
+  .n_error_counters = ARRAY_LEN (oct_tx_node_counters),
+};
+
 static struct
 {
   u16 device_id;
@@ -169,6 +175,7 @@ static vnet_dev_rv_t
 oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 {
   oct_main_t *om = &oct_main;
+  oct_ipsec_main_t *oim = &oct_ipsec_main;
   oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
   oct_device_t *cd = vnet_dev_get_data (dev), **oct_dev = 0;
   u8 mac_addr[6];
@@ -192,10 +199,6 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 
   if ((rrv = roc_nix_npc_mac_addr_get (cd->nix, mac_addr)))
     return cnx_return_roc_err (dev, rrv, "roc_nix_npc_mac_addr_get");
-
-  if (oidm->inl_dev)
-    if ((rv = oct_init_nix_inline_ipsec (vm, oidm->vdev, dev)))
-      return rv;
 
   vnet_dev_port_add_args_t port_add_args = {
     .port = {
@@ -263,6 +266,19 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     },
   };
 
+  if (oidm->inl_dev)
+    {
+      if (oim->inline_ipsec_sessions)
+	{
+	  log_err (dev,
+		   "device attach not allowed after any IPsec SA addition");
+	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	}
+      if ((rv = oct_init_nix_inline_ipsec (vm, oidm->vdev, dev)))
+	return rv;
+      port_add_args.tx_node = &oct_tx_ipsec_tm_node;
+    }
+
   vnet_dev_set_hw_addr_eth_mac (&port_add_args.port.attr.hw_addr, mac_addr);
 
   log_info (dev, "MAC address is %U", format_ethernet_address, mac_addr);
@@ -271,7 +287,9 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     return rv;
 
   pool_get (om->oct_dev, oct_dev);
-  oct_dev = vnet_dev_get_data (dev);
+  oct_dev[0] = vnet_dev_get_data (dev);
+  oct_dev[0]->nix_idx = oct_dev - om->oct_dev;
+  log_info (dev, "veclen %d %d", vec_len (om->oct_dev), oct_dev[0]->nix_idx);
 
   return VNET_DEV_OK;
 }
@@ -587,6 +605,7 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
 
   oct_inl_dev_main.in_min_spi = 0;
   oct_inl_dev_main.in_max_spi = 8192;
+  oct_inl_dev_main.out_max_sa = 8192;
 
   if (!unformat_user (input, unformat_line_input, line_input))
     return 0;
@@ -600,6 +619,9 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
 	;
       else if (unformat (line_input, "ipsec_in_max_spi %u",
 			 &oct_inl_dev_main.in_max_spi))
+	;
+      else if (unformat (line_input, "ipsec_out_max_sa %u",
+			 &oct_inl_dev_main.out_max_sa))
 	;
       else
 	{
@@ -619,3 +641,4 @@ done:
 }
 
 VLIB_EARLY_CONFIG_FUNCTION (oct_early_config, "dev_octeon");
+VLIB_BUFFER_SET_EXT_HDR_SIZE (OCT_EXT_HDR_SIZE);

@@ -7,6 +7,8 @@
 #include <dev_octeon/octeon.h>
 #include <dev_octeon/crypto.h>
 #include <dev_octeon/ipsec.h>
+#include <vnet/ipsec/ipsec_tun.h>
+#include <vnet/fib/fib_entry.h>
 
 #define OCT_NIX_INL_META_POOL_NAME "OCT_NIX_INL_META_POOL"
 
@@ -70,7 +72,6 @@ oct_ipsec_crypto_inst_w7_get (void *sa)
   w7.u64 = 0;
   w7.s.egrp = ROC_LEGACY_CPT_DFLT_ENG_GRP_SE_IE;
   w7.s.ctx_val = 1;
-  w7.s.cptr = (u64) sa;
 
   return w7.u64;
 }
@@ -255,11 +256,16 @@ oct_ipsec_inb_ctx_size (struct roc_ot_ipsec_inb_sa *sa)
 static_always_inline void
 oct_ipsec_common_inst_param_fill (void *sa, oct_ipsec_session_t *sess)
 {
+  union cpt_inst_w2 w2;
   union cpt_inst_w3 w3;
 
   clib_memset (&sess->inst, 0, sizeof (struct cpt_inst_s));
 
   sess->inst.w7.u64 = oct_ipsec_crypto_inst_w7_get (sa);
+
+  w2.u64 = 0;
+  w2.u64 = ((u64) OCT_EVENT_TYPE_FRM_CPU << 28);
+  sess->inst.w2.u64 = w2.u64;
 
   /* Populate word3 in CPT instruction template */
   w3.u64 = 0;
@@ -380,6 +386,201 @@ oct_ipsec_inb_session_update (oct_ipsec_session_t *sess, ipsec_sa_t *sa)
   return 0;
 }
 
+int
+oct_ipsec_outb_sa_idx_get (oct_device_t *od, u32 *index, u32 spi)
+{
+  u32 pos, idx;
+  u64 slab;
+  int rc;
+
+  if (!od->outb.sa_bmap)
+    return -ENOTSUP;
+
+  pos = 0;
+  slab = 0;
+  /* Scan from the beginning */
+  plt_bitmap_scan_init (od->outb.sa_bmap);
+
+  /* Scan bitmap to get the free sa index */
+  rc = plt_bitmap_scan (od->outb.sa_bmap, &pos, &slab);
+  /* Empty bitmap */
+  if (rc == 0)
+    {
+      plt_err ("Outbound SA' exhausted, use 'ipsec_out_max_sa' "
+	       "devargs to increase");
+      return -ERANGE;
+    }
+
+  /* Get free SA index */
+  idx = pos + (slab ? plt_ctz64 (slab) : 0);
+
+  plt_bitmap_clear (od->outb.sa_bmap, idx);
+  *index = idx;
+  return 0;
+}
+
+void *
+oct_ipsec_get_oct_device_from_outb_sa (u32 sa_index)
+{
+  ipsec_sa_t *sa = ipsec_sa_get (sa_index);
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_sw_interface_t *si;
+  u32 sw_if_index;
+  vnet_dev_port_t *port;
+
+  sw_if_index =
+    fib_entry_get_resolving_interface (sa->tunnel.t_fib_entry_index);
+  si = vnet_get_sw_interface_or_null (vnm, sw_if_index);
+  port = vnet_dev_get_port_from_hw_if_index (si->hw_if_index);
+
+  return (oct_device_t *) vnet_dev_get_data (port->dev);
+}
+
+static_always_inline i32
+oct_ipsec_outb_session_update (oct_ipsec_session_t *sess, ipsec_sa_t *sa)
+{
+  oct_main_t *om = &oct_main;
+  union roc_ot_ipsec_outb_param1 param1;
+  struct roc_ot_ipsec_outb_sa *out_sa;
+  oct_ipsec_outb_sa_priv_data_t *outb_priv;
+  union roc_ot_ipsec_sa_word2 w2;
+  union cpt_inst_w4 inst_w4;
+  u32 sa_idx;
+  u64 *ipv6_addr;
+  size_t offset;
+  int rv = 0, i = 0;
+
+  vec_validate_aligned (sess->out_sa, vec_len (om->oct_dev),
+			CLIB_CACHE_LINE_BYTES);
+
+  pool_foreach_pointer (oct_dev, om->oct_dev)
+    {
+      /* Alloc an sa index */
+      rv = oct_ipsec_outb_sa_idx_get (oct_dev, &sa_idx, sa->spi);
+      if (rv)
+	return rv;
+
+      out_sa = sess->out_sa[i] =
+	roc_nix_inl_ot_ipsec_outb_sa (oct_dev->outb.sa_base, sa_idx);
+
+      outb_priv = roc_nix_inl_ot_ipsec_outb_sa_sw_rsvd (out_sa);
+      outb_priv->sa_idx = sa_idx;
+
+      roc_ot_ipsec_outb_sa_init (out_sa);
+
+      w2.u64 = 0;
+      rv = oct_ipsec_sa_common_param_fill (&w2, out_sa->cipher_key,
+					   out_sa->iv.s.salt,
+					   out_sa->hmac_opad_ipad, sa);
+      if (rv)
+	return rv;
+
+      /* Set direction and enable ESN (if needed) */
+      w2.s.dir = ROC_IE_SA_DIR_OUTBOUND;
+      if (ipsec_sa_is_set_USE_ESN (sa))
+	out_sa->w0.s.esn_en = 1;
+
+      /* Configure tunnel header generation */
+      if (ipsec_sa_is_set_IS_TUNNEL (sa))
+	{
+	  if (ipsec_sa_is_set_IS_TUNNEL_V6 (sa))
+	    {
+	      w2.s.outer_ip_ver = ROC_IE_SA_IP_VERSION_6;
+
+	      clib_memcpy (&out_sa->outer_hdr.ipv6.src_addr,
+			   &sa->tunnel.t_src.ip.ip6, sizeof (ip6_address_t));
+	      clib_memcpy (&out_sa->outer_hdr.ipv6.dst_addr,
+			   &sa->tunnel.t_dst.ip.ip6, sizeof (ip6_address_t));
+
+	      /* Convert host to network byte order of ipv6 address */
+	      ipv6_addr = (u64 *) &out_sa->outer_hdr.ipv6.src_addr;
+	      *ipv6_addr = clib_host_to_net_u64 (*ipv6_addr);
+	      ipv6_addr++;
+	      *ipv6_addr = clib_host_to_net_u64 (*ipv6_addr);
+
+	      ipv6_addr = (u64 *) &out_sa->outer_hdr.ipv6.dst_addr;
+	      *ipv6_addr = clib_host_to_net_u64 (*ipv6_addr);
+	      ipv6_addr++;
+	      *ipv6_addr = clib_host_to_net_u64 (*ipv6_addr);
+	    }
+	  else
+	    {
+	      w2.s.outer_ip_ver = ROC_IE_SA_IP_VERSION_4;
+	      out_sa->outer_hdr.ipv4.src_addr =
+		clib_host_to_net_u32 (sa->tunnel.t_src.ip.ip4.as_u32);
+	      out_sa->outer_hdr.ipv4.dst_addr =
+		clib_host_to_net_u32 (sa->tunnel.t_dst.ip.ip4.as_u32);
+	    }
+	}
+
+      offset = offsetof (struct roc_ot_ipsec_outb_sa, ctx);
+      out_sa->w0.s.hw_ctx_off = offset / 8;
+      out_sa->w0.s.ctx_push_size = out_sa->w0.s.hw_ctx_off + 1;
+      /* Set context size, in number of 128B units following the first 128B */
+      out_sa->w0.s.ctx_size = (round_pow2 (offset, 128) >> 7) - 1;
+      out_sa->w0.s.ctx_hdr_size = 1;
+      out_sa->w0.s.aop_valid = 1;
+
+      out_sa->w2.u64 = w2.u64;
+
+      if (ipsec_sa_is_set_IS_TUNNEL (sa))
+	{
+	  if (sa->tunnel.t_encap_decap_flags &
+	      TUNNEL_ENCAP_DECAP_FLAG_ENCAP_COPY_DF)
+	    out_sa->w2.s.ipv4_df_src_or_ipv6_flw_lbl_src =
+	      ROC_IE_OT_SA_COPY_FROM_INNER_IP_HDR;
+	  if (!sa->tunnel.t_dscp)
+	    out_sa->w2.s.dscp_src = ROC_IE_OT_SA_COPY_FROM_INNER_IP_HDR;
+	  else
+	    {
+	      out_sa->w2.s.dscp_src = ROC_IE_OT_SA_COPY_FROM_SA;
+	      out_sa->w10.s.dscp = sa->tunnel.t_dscp;
+	    }
+	}
+
+      out_sa->w2.s.ipid_gen = 1;
+      out_sa->w2.s.iv_src = ROC_IE_OT_SA_IV_SRC_FROM_SA;
+      out_sa->w2.s.valid = 1;
+
+      asm volatile ("dmb oshst" ::: "memory");
+
+      oct_ipsec_sa_len_precalc (sa, &sess->encap);
+
+      oct_ipsec_common_inst_param_fill (out_sa, sess);
+
+      /* Populate word4 in CPT instruction template */
+      inst_w4.u64 = 0;
+      inst_w4.s.opcode_major = ROC_IE_OT_MAJOR_OP_PROCESS_OUTBOUND_IPSEC;
+      param1.u16 = 0;
+      if (sa->tunnel.t_hop_limit)
+	param1.s.ttl_or_hop_limit = 1;
+
+      /* Enable IP checksum computation by default */
+      param1.s.ip_csum_disable = ROC_IE_OT_SA_INNER_PKT_IP_CSUM_ENABLE;
+      /* Enable L4 checksum computation by default */
+      param1.s.l4_csum_disable = ROC_IE_OT_SA_INNER_PKT_L4_CSUM_ENABLE;
+
+      inst_w4.s.param1 = param1.u16;
+      sess->inst.w4.u64 = inst_w4.u64;
+      if (ipsec_sa_is_set_UDP_ENCAP (sa))
+	{
+	  out_sa->w10.s.udp_dst_port = 4500;
+	  out_sa->w10.s.udp_src_port = 4500;
+	}
+
+      rv = roc_nix_inl_ctx_write (oct_dev->nix, out_sa, out_sa, false,
+				  sizeof (struct roc_ot_ipsec_outb_sa));
+      if (rv)
+	{
+	  clib_warning ("roc_nix_inl_ctx_write failed with '%s' error",
+			roc_error_msg_get (rv));
+	  return -1;
+	}
+      i++;
+    }
+  return 0;
+}
+
 static i32
 oct_ipsec_session_create (u32 sa_index)
 {
@@ -396,11 +597,12 @@ oct_ipsec_session_create (u32 sa_index)
   ASSERT (sa_index == sess_index);
 
   if (sa->flags & IPSEC_SA_FLAG_IS_INBOUND)
-    {
-      rv = oct_ipsec_inb_session_update (session, sa);
-      if (rv)
-	return rv;
-    }
+    rv = oct_ipsec_inb_session_update (session, sa);
+  else
+    rv = oct_ipsec_outb_session_update (session, sa);
+
+  if (rv)
+    return rv;
 
   /* Initialize the ITF details in ipsec_session for tunnel SAs */
   if (ipsec_sa_is_set_IS_TUNNEL (sa))
@@ -411,12 +613,13 @@ oct_ipsec_session_create (u32 sa_index)
 static i32
 oct_ipsec_session_destroy (u32 sa_index)
 {
+  oct_main_t *om = &oct_main;
   oct_ipsec_main_t *oim = &oct_ipsec_main;
   ipsec_sa_t *sa = ipsec_sa_get (sa_index);
   oct_ipsec_session_t *session = NULL;
   struct roc_ot_ipsec_inb_sa *roc_sa;
   void *sa_dptr = NULL;
-  int rv;
+  int rv, i = 0;
 
   session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_index);
   if (pool_is_free (oim->inline_ipsec_sessions, session))
@@ -448,8 +651,32 @@ oct_ipsec_session_destroy (u32 sa_index)
 	  plt_free (sa_dptr);
 	}
     }
+  else
+    {
+      pool_foreach_pointer (oct_dev, om->oct_dev)
+	{
+	  sa_dptr = plt_zmalloc (sizeof (struct roc_ot_ipsec_outb_sa), 8);
+	  if (sa_dptr != NULL)
+	    {
+	      roc_ot_ipsec_outb_sa_init (sa_dptr);
+	      rv = roc_nix_inl_ctx_write (
+		oct_dev->nix, sa_dptr, session->out_sa[i], false,
+		sizeof (struct roc_ot_ipsec_outb_sa));
+	      if (rv)
+		{
+		  clib_warning (
+		    "Could not write inline outbound session to hardware");
+		  return rv;
+		}
+	      plt_free (sa_dptr);
+	    }
+	  i++;
+	}
+    }
 
   clib_memset (session, 0, sizeof (oct_ipsec_session_t));
+  pool_put (oim->inline_ipsec_sessions, session);
+
   return 0;
 }
 
@@ -552,17 +779,18 @@ oct_init_ipsec_backend (vlib_main_t *vm, vnet_dev_t *dev)
   u32 idx;
 
   idx = ipsec_register_esp_backend (
-    vm, im, "octeon backend", "esp4-encrypt", "esp4-encrypt-tun",
-    "esp4-decrypt", "esp4-decrypt-tun", "esp6-encrypt", "esp6-encrypt-tun",
+    vm, im, "octeon backend", "esp4-encrypt", "oct-esp4-encrypt-tun",
+    "esp4-decrypt", "esp4-decrypt-tun", "esp6-encrypt", "oct-esp6-encrypt-tun",
     "esp6-decrypt", "esp6-decrypt-tun", "esp-mpls-encrypt-tun",
     oct_ipsec_check_support, oct_add_del_session);
 
   rv = ipsec_select_esp_backend (im, idx);
   if (rv)
     {
-      log_err (dev, "IPsec ESP backend selection failed");
+      log_err (dev, "OCTEON IPsec ESP backend selection failed");
       return VNET_DEV_ERR_INTERNAL;
     }
+
   return VNET_DEV_OK;
 }
 
@@ -579,9 +807,9 @@ oct_ipsec_inl_dev_inb_cfg (vlib_main_t *vm, vnet_dev_t *dev,
 
   if ((rrv = roc_nix_inl_inb_init (cd->nix)))
     {
-      log_err (dev, "roc_nix_inl_inb_init: %s [%d]", roc_error_msg_get (rrv),
-	       rrv);
-      return VNET_DEV_ERR_UNSUPPORTED_DEVICE;
+      log_err (dev, "roc_nix_inl_inb_init failed - ROC error %s [%d]",
+	       roc_error_msg_get (rrv), rrv);
+      return VNET_DEV_ERR_INTERNAL;
     }
 
   roc_nix_inb_mode_set (cd->nix, true);
@@ -658,6 +886,111 @@ oct_pool_inl_meta_pool_cb (u64 *aura_handle, uintptr_t *mpool, u32 buf_sz,
 
   return 0;
 }
+
+vnet_dev_rv_t
+oct_ipsec_inl_dev_outb_cfg (vnet_dev_t *dev, oct_inl_dev_cfg_t *inl_dev_cfg)
+{
+  oct_inl_dev_main_t *inl_dev_main = &oct_inl_dev_main;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_nix *nix = cd->nix;
+  struct roc_cpt_lf *cpt_lf;
+  u64 cpt_io_addr;
+  struct plt_bitmap *bmap;
+  size_t bmap_sz;
+  void *mem;
+  int rrv, i;
+
+  nix->outb_nb_desc = inl_dev_cfg->outb_nb_desc = 8192;
+  nix->outb_nb_crypto_qs = inl_dev_cfg->outb_nb_crypto_qs = 1;
+  nix->ipsec_out_max_sa = cd->outb.max_sa = inl_dev_main->out_max_sa;
+  nix->ipsec_out_sso_pffunc = false;
+
+  rrv = roc_nix_inl_outb_init (nix);
+  if (rrv)
+    {
+      log_err (dev, "roc_nix_inl_outb_init failed - ROC error '%s [%d]",
+	       roc_error_msg_get (rrv), rrv);
+      return VNET_DEV_ERR_INTERNAL;
+    }
+
+  cpt_lf = roc_nix_inl_outb_lf_base_get (nix);
+
+  cpt_io_addr = cpt_lf->io_addr;
+  cpt_io_addr |= (ROC_CN10K_CPT_INST_DW_M1 << 4);
+  cd->cpt_io_addr = cpt_io_addr;
+
+  bmap_sz = plt_bitmap_get_memory_footprint (cd->outb.max_sa);
+  mem = plt_zmalloc (bmap_sz, PLT_CACHE_LINE_SIZE);
+  if (mem == NULL)
+    {
+      log_err (dev, "Outbound SA bmap alloc failed");
+      roc_nix_inl_outb_fini (nix);
+
+      return VNET_DEV_ERR_DMA_MEM_ALLOC_FAIL;
+    }
+
+  bmap = plt_bitmap_init (cd->outb.max_sa, mem, bmap_sz);
+  if (!bmap)
+    {
+      log_err (dev, "Outbound SA bmap init failed");
+      roc_nix_inl_outb_fini (nix);
+      plt_free (mem);
+
+      return VNET_DEV_ERR_DMA_MEM_ALLOC_FAIL;
+    }
+
+  for (i = 0; i < cd->outb.max_sa; i++)
+    plt_bitmap_set (bmap, i);
+
+  cd->outb.sa_base = roc_nix_inl_outb_sa_base_get (nix);
+  cd->outb.sa_bmap_mem = mem;
+  cd->outb.sa_bmap = bmap;
+
+  return VNET_DEV_OK;
+}
+
+void
+oct_ipsec_sso_work_cb (uint64_t *gw, void *args, uint32_t soft_exp_event)
+{
+  vlib_main_t *vm = vlib_get_main ();
+  struct roc_ot_ipsec_outb_sa *sa;
+  oct_ipsec_outb_sa_priv_data_t *outb_priv;
+  vlib_buffer_t *b;
+  u32 bi;
+
+  switch ((gw[0] >> 28) & 0xF)
+    {
+    case OCT_EVENT_TYPE_FRM_INL_DEV:
+      /* Event from inbound inline dev due to IPSEC packet bad L4 */
+      b = (vlib_buffer_t *) (gw[1] - sizeof (vlib_buffer_t));
+      bi = vlib_get_buffer_index (vm, b);
+      vlib_buffer_free_no_next (vm, &bi, 1);
+      return;
+    case OCT_EVENT_TYPE_FRM_CPU:
+      /* Event from outbound inline error */
+      b = (vlib_buffer_t *) gw[1];
+      vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
+      break;
+      /* Fall through */
+    default:
+      if (soft_exp_event & 0x1)
+	{
+	  sa = (struct roc_ot_ipsec_outb_sa *) args;
+	  outb_priv = roc_nix_inl_ot_ipsec_outb_sa_sw_rsvd (sa);
+	  clib_warning ("Soft expiry event received for sa_index %u",
+			outb_priv->sa_idx);
+	}
+      else
+	{
+	  clib_warning ("Unknown event gw[0] = 0x%016lx, gw[1] = 0x%016lx",
+			gw[0], gw[1]);
+	}
+      return;
+    }
+
+  return;
+}
+
 vnet_dev_rv_t
 oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
 {
@@ -697,6 +1030,12 @@ oct_init_nix_inline_ipsec (vlib_main_t *vm, vnet_dev_t *inl_dev,
 
   if ((rv = oct_ipsec_inl_dev_inb_cfg (vm, dev, &inl_dev_cfg)))
     return rv;
+
+  if ((rv = oct_ipsec_inl_dev_outb_cfg (dev, &inl_dev_cfg)))
+    return rv;
+
+  /* Register callback to handle security error work */
+  roc_nix_inl_cb_register (oct_ipsec_sso_work_cb, NULL);
 
   return VNET_DEV_OK;
 }

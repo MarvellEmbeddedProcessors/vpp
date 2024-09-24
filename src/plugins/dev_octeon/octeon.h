@@ -22,6 +22,8 @@
 #include <dev_octeon/hw_defs.h>
 #include <dev_octeon/ipsec.h>
 
+#define OCT_EXT_HDR_SIZE                                                      \
+  PLT_ALIGN (sizeof (oct_ipsec_outbound_pkt_meta_t), ROC_ALIGN)
 #define OCT_NPA_MAX_POOLS	   8192
 #define OCT_BATCH_ALLOC_IOVA0_MASK 0xFFFFFFFFFFFFFF80
 
@@ -93,6 +95,19 @@ typedef union
 
 STATIC_ASSERT_SIZEOF (oct_npa_batch_alloc_cl128_t, 128);
 
+struct oct_outb_sa_data
+{
+  /* SA Bitmap */
+  struct plt_bitmap *sa_bmap;
+  /* SA bitmap memory */
+  void *sa_bmap_mem;
+
+  /* SA base */
+  u64 sa_base;
+
+  u16 max_sa;
+};
+
 typedef struct
 {
   u8 sq_initialized : 1;
@@ -107,11 +122,13 @@ typedef struct
   u8 ba_num_cl;
   CLIB_CACHE_LINE_ALIGN_MARK (data0);
   struct roc_nix_sq sq;
+  i32 cached_pkts;
 } oct_txq_t;
 
 typedef struct
 {
   oct_device_type_t type;
+  u16 nix_idx;
   u8 nix_initialized : 1;
   u8 status : 1;
   u8 full_duplex : 1;
@@ -119,6 +136,12 @@ typedef struct
   struct plt_pci_device plt_pci_dev;
   struct roc_nix *nix;
   oct_msix_handler_info_t *msix_handler;
+
+  u32 cached_cpt_pkts;
+  u64 cpt_io_addr;
+  oct_txq_t **ctqs;
+
+  struct oct_outb_sa_data outb;
 } oct_device_t;
 
 typedef struct
