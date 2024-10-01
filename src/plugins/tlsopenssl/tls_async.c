@@ -775,7 +775,7 @@ vpp_tls_async_enqueue_event (tls_ctx_t *ctx, int evt_type,
   evt_run_tail = &queue[thread_index].evt_run_tail;
   evt_run_head = &queue[thread_index].evt_run_head;
 
-  event->type = SSL_ASYNC_INFLIGHT;
+  event->type = SSL_ASYNC_EVT_INIT;
   event->handler = (openssl_resume_handler *) sp;
   event->next = -1;
 
