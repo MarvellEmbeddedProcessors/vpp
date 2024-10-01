@@ -269,7 +269,7 @@ lcp_xfrm_config_bypass_policies (u32 spd_id, u8 is_add, u8 is_ip6)
   update_bypass_policy_addrs (&policy);
   update_port_details (&policy, 0, 65535, 0, 0);
   policy.policy = IPSEC_POLICY_ACTION_BYPASS;
-  policy.protocol = 0;
+  policy.protocol = IPSEC_POLICY_PROTOCOL_ANY;
   policy.sa_id = 0;
   policy.is_ipv6 = is_ip6;
   policy.id = spd_id;
@@ -338,7 +338,7 @@ lcp_xfrm_inb_policy_cfg (ip_address_t *t_saddr, ip_address_t *t_daddr,
 
   policy.policy = IPSEC_POLICY_ACTION_PROTECT;
   /*SA doesn't have details of inner protocol. So set 0 (means accept any)*/
-  policy.protocol = 0;
+  policy.protocol = IPSEC_POLICY_PROTOCOL_ANY;
   policy.sa_id = sa_id;
   policy.id = spd_id;
   policy.priority = INB_PROTECT_POL_PRIO;
@@ -1410,6 +1410,7 @@ nl_xfrm_sp_add (struct xfrmnl_sp *sp, u8 num)
   if (dir != XFRM_POLICY_OUT)
     return;
 
+  proto = !proto ? IPSEC_POLICY_PROTOCOL_ANY : proto;
   is_ipv6 = (fam == AF_INET6) ? 1 : 0;
 
   lcp_xfrm_mk_ipaddr (sel_dst, &sel_daddr);
