@@ -63,6 +63,22 @@ static struct
 #undef _
 };
 
+static vnet_dev_arg_t oct_port_args[] = {
+  {
+    .id = OCT_PORT_ARG_ALLMULTI_MODE,
+    .name = "allmulti",
+    .desc = "Set allmulti mode, applicable to network devices only",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = false,
+  },
+  {
+    .id = OCT_PORT_ARG_END,
+    .name = "end",
+    .desc = "Argument end",
+    .type = VNET_DEV_ARG_END,
+  },
+};
+
 static u8 *
 oct_probe (vlib_main_t *vm, vnet_dev_bus_index_t bus_index, void *dev_info)
 {
@@ -154,6 +170,7 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
       },
       .data_size = sizeof (oct_port_t),
       .initial_data = &oct_port,
+      .args = oct_port_args,
     },
     .rx_node = &oct_rx_node,
     .tx_node = &oct_tx_node,

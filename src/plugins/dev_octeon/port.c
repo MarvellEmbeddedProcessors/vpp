@@ -164,6 +164,20 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 	}
     }
 
+  /* Enable allmulti mode, if set by arg */
+  foreach_vnet_dev_port_args (arg, port)
+    {
+      if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE)
+	{
+	  if ((rrv = roc_nix_npc_mcast_config (nix, 1, 0)))
+	    {
+	      oct_port_deinit (vm, port);
+	      return oct_roc_err (dev, rrv, "roc_nix_mac_addr_set failed");
+	    }
+	  break;
+	}
+    }
+
   if ((rrv = roc_nix_tm_init (nix)))
     {
       oct_port_deinit (vm, port);
