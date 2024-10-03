@@ -26,6 +26,12 @@
 
 typedef enum
 {
+  OCT_PORT_ARG_ALLMULTI_MODE = 1,
+  OCT_PORT_ARG_END
+} oct_port_args_t;
+
+typedef enum
+{
   OCT_DEVICE_TYPE_UNKNOWN = 0,
   OCT_DEVICE_TYPE_RVU_PF,
   OCT_DEVICE_TYPE_RVU_VF,
