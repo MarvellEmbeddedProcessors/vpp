@@ -16,6 +16,7 @@
 #include <common.h>
 
 struct roc_model oct_model;
+u32 oct_npa_max_pools = OCT_NPA_MAX_POOLS;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -418,6 +419,13 @@ VNET_DEV_REGISTER_DRIVER (octeon) = {
   },
 };
 
+static int
+oct_npa_max_pools_set_cb (struct plt_pci_device *pci_dev)
+{
+  roc_idev_npa_maxpools_set (oct_npa_max_pools);
+  return 0;
+}
+
 static clib_error_t *
 oct_plugin_init (vlib_main_t *vm)
 {
@@ -440,6 +448,8 @@ oct_plugin_init (vlib_main_t *vm)
     return clib_error_return (0, "OCTEON model is not OCTEON10");
 #endif
 
+  roc_npa_lf_init_cb_register (oct_npa_max_pools_set_cb);
+
   return 0;
 }
 
@@ -449,3 +459,35 @@ VLIB_PLUGIN_REGISTER () = {
   .version = VPP_BUILD_VER,
   .description = "dev_octeon",
 };
+
+static clib_error_t *
+oct_early_config (vlib_main_t *vm, unformat_input_t *input)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return 0;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "max-pools %u", &oct_npa_max_pools))
+	;
+      else
+	{
+	  error = clib_error_return (0, "unknown input '%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  if (oct_npa_max_pools < 128 || (oct_npa_max_pools > BIT_ULL (20)))
+    error = clib_error_return (
+      0, "Invalid max-pools value (%u), should be in range of (128 - %u)\n",
+      oct_npa_max_pools, BIT_ULL (20));
+done:
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_EARLY_CONFIG_FUNCTION (oct_early_config, "dev_octeon");
