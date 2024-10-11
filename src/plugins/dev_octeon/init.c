@@ -248,7 +248,7 @@ oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd)
 
   roc_cpt_iq_enable (cpt_lf);
 
-  if ((rrv = roc_cpt_lmtline_init (roc_cpt, cpt_lmtline, 0) < 0))
+  if ((rrv = roc_cpt_lmtline_init (roc_cpt, cpt_lmtline, 0, false) < 0))
     return cnx_return_roc_err (dev, rrv, "roc_cpt_lmtline_init");
 
   return 0;
