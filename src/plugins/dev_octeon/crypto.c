@@ -1478,8 +1478,8 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 	}
       else
 	{
-	  dptr_start_ptr = (u64) (buffer->data + elts->crypto_start_offset -
-				  elts->integ_length_adj);
+	  dptr_start_ptr = (u64) (buffer->data + elts->integ_start_offset);
+
 	  enc_auth_len = elts->crypto_total_length + elts->integ_length_adj;
 
 	  curr_ptr = (u64) (buffer->data + buffer->current_data);
