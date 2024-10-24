@@ -21,6 +21,24 @@
 
 static app_main_t app_main;
 
+/*
+ * test Certificate and Private key can be overwritten when using
+ * test-srv-crt-path and test-srv-key-path tls config section.
+ * If not specified, RSA Certificate and Private key are in use.
+ */
+static vnet_app_add_cert_key_pair_args_t test_srv_key_pair = {
+  .cert = (u8 *) test_srv_crt_rsa,
+  .cert_len = sizeof (test_srv_crt_rsa),
+  .key = (u8 *) test_srv_key_rsa,
+  .key_len = sizeof (test_srv_key_rsa)
+};
+
+vnet_app_add_cert_key_pair_args_t *
+vnet_app_tls_get_test_srv_key_pair (void)
+{
+  return &test_srv_key_pair;
+}
+
 #define app_interface_check_thread_and_barrier(_fn, _arg)		\
   if (PREDICT_FALSE (!vlib_thread_is_main_w_barrier ()))		\
     {									\

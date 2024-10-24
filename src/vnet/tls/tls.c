@@ -15,6 +15,7 @@
 
 #include <vnet/session/application_interface.h>
 #include <vppinfra/lock.h>
+#include <vppinfra/unix.h>
 #include <vnet/tls/tls.h>
 
 static tls_main_t tls_main;
@@ -1389,6 +1390,27 @@ tls_register_engine (const tls_engine_vft_t * vft, crypto_engine_type_t type)
 }
 
 static clib_error_t *
+tls_get_test_file_len_content (char *file_name, u32 *len, u8 **content)
+{
+  clib_error_t *error;
+  uword n_bytes;
+  u8 *rv = 0;
+
+  error = clib_file_n_bytes (file_name, &n_bytes);
+  if (error)
+    return error;
+
+  error = clib_file_contents (file_name, &rv);
+  if (error)
+    return error;
+
+  *len = n_bytes;
+  *content = rv;
+
+  return error;
+}
+
+static clib_error_t *
 tls_init (vlib_main_t * vm)
 {
   vlib_thread_main_t *vtm = vlib_get_thread_main ();
@@ -1452,6 +1474,36 @@ tls_config_fn (vlib_main_t * vm, unformat_input_t * input)
 	}
       else if (unformat (input, "engine-path %s", &tm->engine_path))
 	;
+      else if (unformat (input, "test-srv-crt-path %s",
+			 &tm->test_srv_crt_path))
+	{
+	  clib_error_t *err;
+	  vnet_app_add_cert_key_pair_args_t *ck_pair =
+	    vnet_app_tls_get_test_srv_key_pair ();
+
+	  err = tls_get_test_file_len_content (
+	    tm->test_srv_crt_path, &ck_pair->cert_len, &ck_pair->cert);
+	  if (err)
+	    {
+	      vec_free (tm->test_srv_crt_path);
+	      return err;
+	    }
+	}
+      else if (unformat (input, "test-srv-key-path %s",
+			 &tm->test_srv_key_path))
+	{
+	  clib_error_t *err;
+	  vnet_app_add_cert_key_pair_args_t *ck_pair =
+	    vnet_app_tls_get_test_srv_key_pair ();
+
+	  err = tls_get_test_file_len_content (
+	    tm->test_srv_key_path, &ck_pair->key_len, &ck_pair->key);
+	  if (err)
+	    {
+	      vec_free (tm->test_srv_key_path);
+	      return err;
+	    }
+	}
       else
 	return clib_error_return (0, "unknown input `%U'",
 				  format_unformat_error, input);
