@@ -139,6 +139,8 @@ typedef struct tls_main_
   u64 add_seg_size;
   u32 fifo_size;
   char *engine_path;
+  char *test_srv_key_path;
+  char *test_srv_crt_path;
 } tls_main_t;
 
 typedef struct tls_engine_vft_
