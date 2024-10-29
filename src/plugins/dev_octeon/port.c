@@ -16,6 +16,7 @@
 #define OCT_ETH_LINK_SPEED_100G 100000 /**< 100 Gbps */
 
 extern oct_inl_dev_main_t oct_inl_dev_main;
+tm_system_t tm_system_ops;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -39,6 +40,14 @@ static const u64 rxq_cfg =
   ROC_NIX_LF_RX_CFG_CSUM_OL4 | ROC_NIX_LF_RX_CFG_CSUM_IL4 |
   ROC_NIX_LF_RX_CFG_LEN_OL3 | ROC_NIX_LF_RX_CFG_LEN_OL4 |
   ROC_NIX_LF_RX_CFG_LEN_IL3 | ROC_NIX_LF_RX_CFG_LEN_IL4;
+
+static int
+oct_init_tm_args (tm_system_t *tm)
+{
+  memset (tm, 0, sizeof (tm_system_t));
+  memcpy (tm, &dev_oct_tm_ops, sizeof (tm_system_t));
+  return 0;
+}
 
 static vnet_dev_rv_t
 oct_roc_err (vnet_dev_t *dev, int rv, char *fmt, ...)
@@ -135,10 +144,10 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   oct_port_t *cp = vnet_dev_get_port_data (port);
   u8 mac_addr[PLT_ETHER_ADDR_LEN];
   struct roc_nix *nix = cd->nix;
-  vnet_dev_rv_t rv;
+  vnet_dev_rv_t rv = -1;
   int rrv;
 
-  log_debug (dev, "port init: port %u", port->port_id);
+  log_notice (dev, "port init: port %u", port->port_id);
 
   if ((rrv = roc_nix_lf_alloc (nix, port->intf.num_rx_queues,
 			       port->intf.num_tx_queues, rxq_cfg)))
@@ -247,6 +256,9 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
 
   oct_port_add_counters (vm, port);
+
+  oct_init_tm_args (&tm_system_ops);
+  tm_system_register (&tm_system_ops, port->intf.hw_if_index);
 
   return VNET_DEV_OK;
 }
