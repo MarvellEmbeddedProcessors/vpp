@@ -39,6 +39,7 @@ add_vpp_plugin(dev_octeon
   counter.c
   crypto.c
   ipsec.c
+  tm.c
 
   MULTIARCH_SOURCES
   rx_node.c
