@@ -241,4 +241,6 @@ typedef struct
   oct_tx_desc_t desc;
 } oct_tx_trace_t;
 
+extern tm_system_t dev_oct_tm_ops;
+
 #endif /* _OCTEON_H_ */
