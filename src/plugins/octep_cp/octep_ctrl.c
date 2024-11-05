@@ -15,7 +15,6 @@
 #include "octep_cp_lib.h"
 #include "octep_input.h"
 #include "octep_config.h"
-#include <onp/onp.h>
 #include <vpp/app/version.h>
 #include <assert.h>
 #include <vnet/plugin/plugin.h>
@@ -221,9 +220,7 @@ octep_cp_init (vlib_main_t *vm)
   return NULL;
 }
 
-VLIB_INIT_FUNCTION (octep_cp_init) = {
-  .runs_after = VLIB_INITS ("onp_plugin_init"),
-};
+VLIB_INIT_FUNCTION (octep_cp_init);
 
 VLIB_PLUGIN_REGISTER () = {
   .version = VPP_BUILD_VER,
