@@ -7,7 +7,7 @@
 #ifndef __OCTEP_INPUT_H__
 #define __OCTEP_INPUT_H__
 
-#define DEVICE_INPUT	"device-input"
+#define DEVICE_INPUT	"port-rx-eth"
 #define DPU_INPUT_NODE	"h2d-input"
 #define DEVICE_OUTPUT	"interface-output"
 #define DPU_OUTPUT_NODE "d2h-output"

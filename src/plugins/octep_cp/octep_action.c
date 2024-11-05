@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  * https://spdx.org/licenses/Apache-2.0.html
  */
-
-#include <onp/onp.h>
 #include <vnet/vnet.h>
 #include "octep_action.h"
 #include "octep_ctrl_net.h"
