@@ -9,6 +9,8 @@
 #include <dev_octeon/oct_virtio.h>
 
 #define OCT_VIRTIO_MAX_WRKS 24
+#define OCT_VIRTIO_CHECKSUM_OFFLOAD_MASK 0x3
+#define OCT_VIRTIO_TSO_OFFLOAD_MASK	 0xFFFF
 
 extern oct_virtio_main_t *oct_virtio_main;
 extern oct_virtio_port_map_t *virtio_port_map;
@@ -139,17 +141,53 @@ oct_virtio_netdev_hdrlen_get (u16 virtio_devid)
   return virtio_hdr_sz;
 }
 
+static int
+chksum_offload_configure (uint16_t virtio_devid, u64 *tx_offloads,
+			  u64 *rx_offloads)
+{
+  u64 csum_offload, tso_offload;
+
+  csum_offload = dao_virtio_netdev_feature_bits_get (virtio_devid) &
+		 OCT_VIRTIO_CHECKSUM_OFFLOAD_MASK;
+  tso_offload = dao_virtio_netdev_feature_bits_get (virtio_devid) &
+		OCT_VIRTIO_TSO_OFFLOAD_MASK;
+
+  if (csum_offload & DAO_BIT_ULL (VIRTIO_NET_F_CSUM))
+    *tx_offloads |= OCT_ETH_TX_OFFLOAD_IPV4_CKSUM;
+
+  if (tso_offload & DAO_BIT_ULL (VIRTIO_NET_F_HOST_TSO4) ||
+      tso_offload & DAO_BIT_ULL (VIRTIO_NET_F_HOST_TSO6))
+    {
+      *tx_offloads |= OCT_ETH_TX_OFFLOAD_TCP_TSO;
+      log_err ("TSO offload is not supported\n");
+    }
+
+  if (csum_offload & DAO_BIT_ULL (VIRTIO_NET_F_GUEST_CSUM))
+    *rx_offloads |= OCT_ETH_RX_OFFLOAD_CHECKSUM;
+
+  /**
+   * We need to configure out interface, but by default, OCTEON interfaces are
+   * enabled with RX and TX checksum enabled, and currently, we don’t have
+   * control to enable or disable them. For now, based on these flags, the
+   * correct flags will be set for the HOST.
+   */
+  return 0;
+}
+
 static_always_inline int
 oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
 {
   u32 cpu_id = 0;
   u16 virt_rx_q, q_id;
+  u64 tx_offloads = 0, rx_offloads = 0;
   oct_virtio_main_t *ovm = oct_virtio_main;
   u64 wrkr_cpu_mask = ovm->wrkr_cpu_mask;
   oct_virtio_per_thread_data_t *ptd = oct_virt_thread_data;
   u16 virtio_hdr_sz = 0;
 
   virtio_hdr_sz = oct_virtio_netdev_hdrlen_get (virtio_devid);
+
+  chksum_offload_configure (virtio_devid, &tx_offloads, &rx_offloads);
 
   virt_rx_q = virt_q_count / 2;
   q_id = 0;
@@ -162,6 +200,11 @@ oct_virtio_setup_worker_queue_mapping (u16 virtio_devid, u16 virt_q_count)
       CLIB_MEMORY_BARRIER ();
       ptd[cpu_id].netdev_map |= DAO_BIT (virtio_devid);
 
+      if (oct_virtio_main->ip4_csum_offload_enable)
+	{
+	  ptd[cpu_id].intf[virtio_devid].tx_offloads = tx_offloads;
+	  ptd[cpu_id].intf[virtio_devid].rx_offloads = rx_offloads;
+	}
       wrkr_cpu_mask &= ~DAO_BIT_ULL (cpu_id);
       cpu_id++;
       if (!wrkr_cpu_mask)
@@ -249,7 +292,6 @@ oct_virtio_dev_status_cb (u16 virtio_devid, u8 status)
       oct_virtio_clear_lcore_queue_mapping (virtio_devid);
       break;
     case VIRTIO_DEV_DRIVER_OK:
-
       /* Get active virt queue count */
       virt_q_count = dao_virtio_netdev_queue_count (virtio_devid);
 

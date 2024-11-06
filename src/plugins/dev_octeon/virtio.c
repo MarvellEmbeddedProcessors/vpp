@@ -28,6 +28,7 @@ enum oct_virtio_dev_args_types
   DEV_ARG_VIRT_NB_VIRTIO_DEVICES = 1,
   DEV_ARG_VIRT_DMA_DEVICE_LIST,
   DEV_ARG_VIRT_MISC_DEVICE,
+  DEV_ARG_VIRT_CSUM_OFFLD_EN,
   DEV_ARG_VIRT_END
 };
 
@@ -50,6 +51,13 @@ static vnet_dev_arg_t oct_virtio_dev_args[] = {
     .name = "misc",
     .desc = "Miscellaneous device list",
     .type = VNET_DEV_ARG_TYPE_STRING,
+  },
+  {
+    .id = DEV_ARG_VIRT_CSUM_OFFLD_EN,
+    .name = "enable_csum_offld",
+    .desc = "Enable Host checksum offload",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = 0,
   },
   {
     .id = DEV_ARG_VIRT_END,
@@ -208,15 +216,18 @@ oct_virtio_parse_arguments (dao_pal_global_conf_t *conf, vnet_dev_arg_t *args)
       switch (a->id)
 	{
 	case DEV_ARG_VIRT_NB_VIRTIO_DEVICES:
-	  conf->nb_virtio_devs = a->val.uint32;
+	  conf->nb_virtio_devs = vnet_dev_arg_get_uint32 (a);
 	  break;
 	case DEV_ARG_VIRT_DMA_DEVICE_LIST:
-	  conf->dma_devices =
-	    oct_populate_dma_device_list (&conf->nb_dma_devs, a->val.string);
+	  conf->dma_devices = oct_populate_dma_device_list (
+	    &conf->nb_dma_devs, vnet_dev_arg_get_string (a));
 	  break;
 	case DEV_ARG_VIRT_MISC_DEVICE:
 	  conf->misc_devices = oct_populate_dma_device_list (
-	    &conf->nb_misc_devices, a->val.string);
+	    &conf->nb_misc_devices, vnet_dev_arg_get_string (a));
+	  break;
+	case DEV_ARG_VIRT_CSUM_OFFLD_EN:
+	  oct_virtio_main->ip4_csum_offload_enable = vnet_dev_arg_get_bool (a);
 	  break;
 	default:
 	  log_info ("Invalid virtio device arguments received\n");
