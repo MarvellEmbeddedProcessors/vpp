@@ -304,7 +304,12 @@ oct_virtio_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  nf = vlib_node_runtime_get_next_frame (vm, node, rxq->next_index);
 	  f = vlib_get_frame (vm, nf->frame);
 	  f->flags = ETH_INPUT_FRAME_F_SINGLE_SW_IF_IDX;
-	  /* checksum offload not supported yet */
+	  /**
+	   * We can set the checksum as OK because, in the host checksum
+	   * offload case, OCTEON Tx will perform the checksum computation. In
+	   * the host non-checksum offload case, the host computes the checksum
+	   * and provides it to OCTEON.
+	   */
 	  f->flags |= ETH_INPUT_FRAME_F_IP4_CKSUM_OK;
 
 	  ef = vlib_frame_scalar_args (f);

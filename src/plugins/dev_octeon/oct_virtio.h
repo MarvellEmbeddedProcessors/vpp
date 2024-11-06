@@ -26,6 +26,10 @@
 #define OCT_VIRTIO_DEVICE_ID	 0xa70d
 #define MAX_JUMBO_PKT_LEN	 9600
 
+#define OCT_ETH_TX_OFFLOAD_IPV4_CKSUM (1 << 0)
+#define OCT_ETH_RX_OFFLOAD_CHECKSUM   (1 << 1)
+#define OCT_ETH_TX_OFFLOAD_TCP_TSO    (1 << 2)
+
 #define foreach_oct_virt_tx_node_counter                                      \
   _ (ENQUE_FAIL, enque_fail, ERROR, "Virtio enqueue failed")
 
@@ -90,6 +94,7 @@ typedef struct
   u64 netdev_map;
   u16 netdev_qp_count[DAO_VIRTIO_DEV_MAX];
   u8 dao_lib_initialized;
+  u8 ip4_csum_offload_enable;
 } oct_virtio_main_t;
 
 typedef struct
@@ -107,9 +112,16 @@ typedef struct
 
 typedef struct
 {
+  u64 rx_offloads;
+  u64 tx_offloads;
+} oct_intf_offload_t;
+
+typedef struct
+{
   u8 initialized;
   u16 service_core;
   u64 netdev_map;
+  oct_intf_offload_t intf[DAO_VIRTIO_DEV_MAX];
   oct_virtio_q_info_t q_map[DAO_VIRTIO_DEV_MAX];
 } oct_virtio_per_thread_data_t;
 

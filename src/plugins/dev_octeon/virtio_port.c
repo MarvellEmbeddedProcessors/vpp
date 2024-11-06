@@ -17,6 +17,7 @@
 
 static u64 vchan_bitmap[2] = { 0 };
 extern oct_virtio_port_map_t *virtio_port_map;
+extern oct_virtio_main_t *oct_virtio_main;
 
 VLIB_REGISTER_LOG_CLASS (oct_virt_log, static) = {
   .class_name = "octeon",
@@ -82,6 +83,7 @@ oct_virtio_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   netdev_conf.link_info.duplex = 0xFF;
   netdev_conf.hash_key_size = OCT_VIRTIO_NIX_RSS_KEY_LEN;
   netdev_conf.dma_vchan = oct_virtio_dma_vchan_id_allocate ();
+  netdev_conf.csum_en = oct_virtio_main->ip4_csum_offload_enable;
   memcpy (netdev_conf.mac, port->attr.hw_addr.eth_mac,
 	  sizeof (netdev_conf.mac));
   log_debug ("port start: port %u, virtio_id %u, vchan_id %d\n", port->port_id,

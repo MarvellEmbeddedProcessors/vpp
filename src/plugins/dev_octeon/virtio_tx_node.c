@@ -42,6 +42,7 @@ static_always_inline u32
 oct_virtio_enqueue (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    vlib_buffer_t **b, u16 nb_pkts, u16 virtio_devid)
 {
+  u64 rx_offload;
   vlib_buffer_t *bp;
   bool next_present;
   u64 tx_q_map, q_map;
@@ -57,6 +58,11 @@ oct_virtio_enqueue (vlib_main_t *vm, vlib_node_runtime_t *node,
   tx_q_map = ptd[cpu_id].q_map[virtio_devid].qmap;
   q_map = ptd[cpu_id].q_map[virtio_devid].qmap;
   hdr_len = ptd[cpu_id].q_map[virtio_devid].virtio_hdr_sz;
+  rx_offload = ptd[cpu_id].intf[virtio_devid].rx_offloads;
+
+  /* Packets reaching to tx node means we can assume the checksum is good. */
+  if (rx_offload & OCT_ETH_RX_OFFLOAD_CHECKSUM)
+    vhdr_init.hdr.flags = VIRTIO_NET_HDR_F_DATA_VALID;
 
   while (nb_pkts >= 8)
     {
