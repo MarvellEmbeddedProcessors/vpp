@@ -112,6 +112,48 @@ oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, u32 parent_node_id,
 }
 
 int
+oct_tm_sys_node_suspend (u32 hw_if_idx, u32 node_id)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+  vnet_dev_port_t *port =
+    vnet_dev_get_port_from_dev_instance (hi->dev_instance);
+  vnet_dev_t *dev = port->dev;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_nix *nix = cd->nix;
+  int rc;
+
+  rc = roc_nix_tm_node_suspend_resume (nix, node_id, true);
+  if (rc)
+    {
+      return oct_roc_err (dev, rc, "roc_nix_tm_node_suspend_failed");
+    }
+
+  return rc;
+}
+
+int
+oct_tm_sys_node_resume (u32 hw_if_idx, u32 node_id)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+  vnet_dev_port_t *port =
+    vnet_dev_get_port_from_dev_instance (hi->dev_instance);
+  vnet_dev_t *dev = port->dev;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_nix *nix = cd->nix;
+  int rc;
+
+  rc = roc_nix_tm_node_suspend_resume (nix, node_id, false);
+  if (rc)
+    {
+      return oct_roc_err (dev, rc, "roc_nix_tm_node_resume_failed");
+    }
+
+  return rc;
+}
+
+int
 oct_tm_sys_node_delete (u32 hw_if_idx, u32 node_id)
 {
   vnet_main_t *vnm = vnet_get_main ();
