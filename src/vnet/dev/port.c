@@ -516,6 +516,7 @@ vnet_dev_port_if_create (vlib_main_t *vm, vnet_dev_port_t *port)
   u16 n_threads = vlib_get_n_threads ();
   vnet_dev_main_t *dm = &vnet_dev_main;
   vnet_dev_t *dev = port->dev;
+  vnet_dev_tx_queue_t *txq, **qp;
   vnet_dev_port_t **pp;
   vnet_dev_rv_t rv;
   u16 ti = 0;
@@ -553,13 +554,15 @@ vnet_dev_port_if_create (vlib_main_t *vm, vnet_dev_port_t *port)
 	VNET_DEV_OK)
       goto error;
 
-  foreach_vnet_dev_port_tx_queue (q, port)
+  for (ti = 0; ti < n_threads; ti++)
     {
-      q->assigned_threads = clib_bitmap_set (q->assigned_threads, ti, 1);
+      qp = pool_elt_at_index (port->tx_queues, ti % port->intf.num_tx_queues);
+      txq = qp[0];
+      txq->assigned_threads = clib_bitmap_set (txq->assigned_threads, ti, 1);
       log_debug (dev, "port %u tx queue %u assigned to thread %u",
-		 port->port_id, q->queue_id, ti);
-      if (++ti >= n_threads)
-	break;
+		 port->port_id, txq->queue_id, ti);
+      if (clib_bitmap_count_set_bits (txq->assigned_threads) > 1)
+	txq->lock_needed = 1;
     }
 
   /* pool of port pointers helps us to assign unique dev_instance */
