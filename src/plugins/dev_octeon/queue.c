@@ -88,6 +88,7 @@ vnet_dev_rv_t
 oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
 {
   oct_main_t *om = &oct_main;
+  oct_inl_dev_main_t *inl_main = &oct_inl_dev_main;
   oct_rxq_t *crq = vnet_dev_get_rx_queue_data (rxq);
   vnet_dev_t *dev = rxq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
@@ -98,6 +99,9 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
 
   struct npa_aura_s aura = {};
   struct npa_pool_s npapool = { .nat_align = 1 };
+
+  if (!om->use_single_rx_aura)
+    total_sz = rxq->size;
 
   if (!om->use_single_rx_aura || !om->aura_handle)
     {
@@ -121,6 +125,12 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
     .nb_desc = rxq->size,
     .qid = rxq->queue_id,
   };
+
+  if (inl_main->inl_dev)
+    {
+      roc_nix_inl_dev_xaq_realloc (crq->aura_handle);
+      crq->cq.nb_desc = clib_max (crq->cq.nb_desc, 4096);
+    }
 
   if ((rrv = roc_nix_cq_init (nix, &crq->cq)))
     {
@@ -218,10 +228,8 @@ oct_txq_init (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
   int rrv;
   vlib_buffer_pool_t *bp = vlib_get_buffer_pool (vm, 0);
 
-  if ((rrv = roc_npa_pool_create (
-	 &ctq->aura_handle, bp->alloc_size,
-	 txq->size * 6 /* worst case - two SG with 3 segs each = 6 */, &aura,
-	 &npapool, 0)))
+  if ((rrv = roc_npa_pool_create (&ctq->aura_handle, bp->alloc_size,
+				  bp->n_buffers, &aura, &npapool, 0)))
     {
       oct_txq_deinit (vm, txq);
       return oct_roc_err (dev, rrv, "roc_npa_pool_create() failed");

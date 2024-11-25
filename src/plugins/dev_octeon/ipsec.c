@@ -672,7 +672,8 @@ oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
 
   inl_dev_main->inl_dev->ipsec_in_min_spi = inl_dev_main->in_min_spi;
   inl_dev_main->inl_dev->ipsec_in_max_spi = inl_dev_main->in_max_spi;
-  inl_dev_main->inl_dev->wqe_skip = 0;
+  inl_dev_main->inl_dev->wqe_skip =
+    STRUCT_OFFSET_OF (vlib_buffer_t, pre_data) / ROC_ALIGN;
   inl_dev_main->inl_dev->nb_meta_bufs = bp->n_buffers;
 
   if ((rrv = roc_nix_inl_dev_init (inl_dev_main->inl_dev)) < 0)
