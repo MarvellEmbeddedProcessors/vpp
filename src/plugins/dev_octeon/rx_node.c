@@ -408,6 +408,105 @@ oct_rx_ipsec_set_error (vlib_main_t *vm, vlib_node_runtime_t *node,
     }
 }
 
+#define OCT_SEG_LEN_SHIFT 16
+#define OCT_SEG_LEN_MASK  0xFFFF
+
+static_always_inline u32
+oct_rx_ipsec_attach_tail (vlib_main_t *vm, const union nix_rx_parse_u *rxp0,
+			  vlib_buffer_template_t *bt, vlib_buffer_t *b)
+{
+  u32 n_words, n_words_processed, desc_sizem1;
+  vlib_buffer_t *last_buf, *seg_buf;
+  u32 n_sg_desc, n_segs, next_seg;
+  u32 current_desc, bi, sg_len;
+  vlib_buffer_t *buf = b;
+  struct nix_rx_sg_s *sg;
+  u32 total_segs = 1;
+  u64 seg_len;
+  i64 len;
+
+  desc_sizem1 = rxp0->desc_sizem1;
+  if (desc_sizem1 == 0)
+    return total_segs;
+
+  n_words = desc_sizem1 << 1;
+  n_sg_desc = (n_words / 4) + 1;
+
+  sg = (struct nix_rx_sg_s *) (((char *) rxp0) + sizeof (*rxp0));
+  /* Typecast to u64 to read each seg length swiftly */
+  seg_len = *(u64 *) sg;
+  n_segs = sg->segs;
+
+  /* Start with first descriptor */
+  current_desc = 0;
+
+  len = buf->current_length;
+  /*
+   * We updated length which is valid in single segment case.
+   * incase of multi seg, update seg1 length and advance total words processed.
+   * also, updates total bytes in buffer.
+   */
+  buf->current_length = seg_len & OCT_SEG_LEN_MASK;
+  len -= buf->current_length;
+
+  /* Process from 2nd segment */
+  next_seg = 2;
+  seg_len = seg_len >> OCT_SEG_LEN_SHIFT;
+  n_words_processed = 2;
+
+  buf->flags |= VLIB_BUFFER_TOTAL_LENGTH_VALID;
+  buf->total_length_not_including_first_buffer = 0;
+  last_buf = buf;
+
+  while (current_desc <= n_sg_desc)
+    {
+      while (next_seg <= n_segs)
+	{
+	  seg_buf = (vlib_buffer_t *) ((*(((u64 *) sg) + n_words_processed)) -
+				       sizeof (vlib_buffer_t));
+	  seg_buf->template = *bt;
+	  sg_len = seg_len & OCT_SEG_LEN_MASK;
+
+	  {
+	    /*
+	     * Adjust last buf data length with negative offset for
+	     * ipsec pkts if needed.
+	     */
+	    len -= sg_len;
+	    sg_len = (len > 0) ? sg_len : (sg_len + len);
+	    len = (len > 0) ? len : 0;
+	  }
+
+	  seg_buf->current_length = sg_len;
+	  bi = vlib_get_buffer_index (vm, seg_buf);
+	  last_buf->flags |= VLIB_BUFFER_NEXT_PRESENT;
+	  last_buf->next_buffer = bi;
+	  last_buf = seg_buf;
+	  seg_len = seg_len >> OCT_SEG_LEN_SHIFT;
+	  buf->total_length_not_including_first_buffer +=
+	    seg_buf->current_length;
+	  n_words_processed++;
+	  next_seg++;
+	  total_segs++;
+	}
+      current_desc++;
+      n_sg_desc--;
+      if (n_sg_desc)
+	{
+	  struct nix_rx_sg_s *tsg;
+
+	  tsg = (struct nix_rx_sg_s *) ((u64 *) sg + n_words_processed);
+	  seg_len = *((u64 *) (tsg));
+	  n_words_processed++;
+	  /* Start over */
+	  n_segs = tsg->segs;
+	  next_seg = 1;
+	}
+    }
+
+  return total_segs;
+}
+
 static_always_inline u32
 oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 			       oct_nix_rx_cqe_desc_t *d, vlib_buffer_t **b,
@@ -423,7 +522,7 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
   cpt_hdr = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) d) + 9);
   wqe_ptr = (u64 *) clib_net_to_host_u64 (cpt_hdr->wqe_ptr);
 
-  b[0] = (vlib_buffer_t *) wqe_ptr;
+  b[0] = (vlib_buffer_t *) ((u8 *) wqe_ptr - 128);
   orig_rxp = (union nix_rx_parse_u *) (wqe_ptr + 1);
   l2_ol3_sz = orig_rxp->leptr - orig_rxp->laptr;
   olen = orig_rxp->pkt_lenm1 + 1;
@@ -449,6 +548,7 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 	oct_get_len_from_meta (cpt_hdr, d[0].parse.w[0], d[0].parse.w[4]);
       idx = cpt_hdr->w0.cookie;
       oct_rx_ipsec_update_counters (vm, b[0], esp_sz, 1, idx);
+      oct_rx_ipsec_attach_tail (vm, orig_rxp, bt, b[0]);
     }
   ctx->n_rx_bytes += olen;
 
@@ -456,6 +556,7 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 
   return 0;
 }
+
 static_always_inline u32
 oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
 		     vlib_buffer_t **b, oct_rx_node_ctx_t *ctx,
@@ -626,10 +727,10 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  wqe_ptr2 = (u64 *) clib_net_to_host_u64 (cpt_hdr2->wqe_ptr);
 	  wqe_ptr3 = (u64 *) clib_net_to_host_u64 (cpt_hdr3->wqe_ptr);
 
-	  b[0] = (vlib_buffer_t *) wqe_ptr0;
-	  b[1] = (vlib_buffer_t *) wqe_ptr1;
-	  b[2] = (vlib_buffer_t *) wqe_ptr2;
-	  b[3] = (vlib_buffer_t *) wqe_ptr3;
+	  b[0] = (vlib_buffer_t *) ((u8 *) wqe_ptr0 - 128);
+	  b[1] = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+	  b[2] = (vlib_buffer_t *) ((u8 *) wqe_ptr2 - 128);
+	  b[3] = (vlib_buffer_t *) ((u8 *) wqe_ptr3 - 128);
 
 	  orig_rxp0 = (union nix_rx_parse_u *) (wqe_ptr0 + 1);
 	  orig_rxp1 = (union nix_rx_parse_u *) (wqe_ptr1 + 1);
@@ -691,6 +792,11 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      oct_rx_ipsec_update_counters_x4 (
 		vm, b[0], esp_sz0, 1, idx0, b[1], esp_sz1, 1, idx1, b[2],
 		esp_sz2, 1, idx2, b[3], esp_sz3, 1, idx3);
+
+	      oct_rx_ipsec_attach_tail (vm, orig_rxp0, &bt, b[0]);
+	      oct_rx_ipsec_attach_tail (vm, orig_rxp1, &bt, b[1]);
+	      oct_rx_ipsec_attach_tail (vm, orig_rxp2, &bt, b[2]);
+	      oct_rx_ipsec_attach_tail (vm, orig_rxp3, &bt, b[3]);
 	    }
 	  else
 	    {
@@ -708,6 +814,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr0, d[0].parse.w[0], d[0].parse.w[4]);
 		  idx0 = cpt_hdr0->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[0], esp_sz0, 1, idx0);
+		  oct_rx_ipsec_attach_tail (vm, orig_rxp0, &bt, b[0]);
 		}
 
 	      if (is_fail1)
@@ -724,6 +831,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr1, d[1].parse.w[0], d[1].parse.w[4]);
 		  idx1 = cpt_hdr1->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[1], esp_sz1, 1, idx1);
+		  oct_rx_ipsec_attach_tail (vm, orig_rxp1, &bt, b[1]);
 		}
 
 	      if (is_fail2)
@@ -740,6 +848,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr2, d[2].parse.w[0], d[2].parse.w[4]);
 		  idx2 = cpt_hdr2->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[2], esp_sz2, 1, idx2);
+		  oct_rx_ipsec_attach_tail (vm, orig_rxp2, &bt, b[2]);
 		}
 
 	      if (is_fail3)
@@ -756,6 +865,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr3, d[3].parse.w[0], d[3].parse.w[4]);
 		  idx3 = cpt_hdr3->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[3], esp_sz3, 1, idx3);
+		  oct_rx_ipsec_attach_tail (vm, orig_rxp3, &bt, b[3]);
 		}
 	    }
 	  ctx->n_rx_bytes += olen0 + olen1 + olen2 + olen3;
@@ -878,6 +988,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  laddr = (uintptr_t) LMT_OFF (lbase, lnum, 8);
 	}
     }
+
   if (loff)
     {
       /* 16 LMT Line size m1 */

@@ -370,6 +370,15 @@ oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
   oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
   vnet_dev_rv_t rv;
 
+  if ((STRUCT_SIZE_OF (vlib_buffer_t, pre_data) < 128) ||
+      (STRUCT_OFFSET_OF (vlib_buffer_t, pre_data) % ROC_ALIGN))
+    {
+      log_err (dev, "Failed to initalize inline device: pre_data size should "
+		    "be minimum 128 Bytes and offset of pre_data in vlib "
+		    "should be 128 bytes aligned");
+      return VNET_DEV_ERR_NOT_SUPPORTED;
+    }
+
   oidm->inl_dev = oct_plt_init_param.oct_plt_zmalloc (
     sizeof (struct roc_nix_inl_dev), CLIB_CACHE_LINE_BYTES);
   oidm->inl_dev->pci_dev = &od->plt_pci_dev;
@@ -377,6 +386,7 @@ oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
 
   if ((rv = oct_early_init_inline_ipsec (vm, dev)))
     return rv;
+
   if ((rv = oct_init_ipsec_backend (vm, dev)))
     return rv;
 
