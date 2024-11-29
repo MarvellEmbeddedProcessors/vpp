@@ -436,7 +436,7 @@ oct_ipsec_session_destroy (u32 sa_index)
       sa_dptr = plt_zmalloc (sizeof (struct roc_ot_ipsec_inb_sa), 8);
       if (sa_dptr != NULL)
 	{
-	  roc_ot_ipsec_inb_sa_init (sa_dptr, true);
+	  roc_ot_ipsec_inb_sa_init (sa_dptr);
 	  rv = roc_nix_inl_ctx_write (NULL, sa_dptr, roc_sa, true,
 				      sizeof (struct roc_ot_ipsec_inb_sa));
 	  if (rv)
