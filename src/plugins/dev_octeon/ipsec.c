@@ -256,11 +256,16 @@ oct_ipsec_inb_ctx_size (struct roc_ot_ipsec_inb_sa *sa)
 static_always_inline void
 oct_ipsec_common_inst_param_fill (void *sa, oct_ipsec_session_t *sess)
 {
+  union cpt_inst_w2 w2;
   union cpt_inst_w3 w3;
 
   clib_memset (&sess->inst, 0, sizeof (struct cpt_inst_s));
 
   sess->inst.w7.u64 = oct_ipsec_crypto_inst_w7_get (sa);
+
+  w2.u64 = 0;
+  w2.u64 = ((u64) OCT_EVENT_TYPE_FRM_CPU << 28);
+  sess->inst.w2.u64 = w2.u64;
 
   /* Populate word3 in CPT instruction template */
   w3.u64 = 0;
@@ -944,6 +949,48 @@ oct_ipsec_inl_dev_outb_cfg (vnet_dev_t *dev, oct_inl_dev_cfg_t *inl_dev_cfg)
   return VNET_DEV_OK;
 }
 
+void
+oct_ipsec_sso_work_cb (uint64_t *gw, void *args, uint32_t soft_exp_event)
+{
+  vlib_main_t *vm = vlib_get_main ();
+  struct roc_ot_ipsec_outb_sa *sa;
+  oct_ipsec_outb_sa_priv_data_t *outb_priv;
+  vlib_buffer_t *b;
+  u32 bi;
+
+  switch ((gw[0] >> 28) & 0xF)
+    {
+    case OCT_EVENT_TYPE_FRM_INL_DEV:
+      /* Event from inbound inline dev due to IPSEC packet bad L4 */
+      b = (vlib_buffer_t *) (gw[1] - sizeof (vlib_buffer_t));
+      bi = vlib_get_buffer_index (vm, b);
+      vlib_buffer_free_no_next (vm, &bi, 1);
+      return;
+    case OCT_EVENT_TYPE_FRM_CPU:
+      /* Event from outbound inline error */
+      b = (vlib_buffer_t *) gw[1];
+      vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
+      break;
+      /* Fall through */
+    default:
+      if (soft_exp_event & 0x1)
+	{
+	  sa = (struct roc_ot_ipsec_outb_sa *) args;
+	  outb_priv = roc_nix_inl_ot_ipsec_outb_sa_sw_rsvd (sa);
+	  clib_warning ("Soft expiry event received for sa_index %u",
+			outb_priv->sa_idx);
+	}
+      else
+	{
+	  clib_warning ("Unknown event gw[0] = 0x%016lx, gw[1] = 0x%016lx",
+			gw[0], gw[1]);
+	}
+      return;
+    }
+
+  return;
+}
+
 vnet_dev_rv_t
 oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
 {
@@ -986,6 +1033,9 @@ oct_init_nix_inline_ipsec (vlib_main_t *vm, vnet_dev_t *inl_dev,
 
   if ((rv = oct_ipsec_inl_dev_outb_cfg (dev, &inl_dev_cfg)))
     return rv;
+
+  /* Register callback to handle security error work */
+  roc_nix_inl_cb_register (oct_ipsec_sso_work_cb, NULL);
 
   return VNET_DEV_OK;
 }

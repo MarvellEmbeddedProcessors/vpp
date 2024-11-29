@@ -7,6 +7,9 @@
 #ifndef _OCTEON_IPSEC_H_
 #define _OCTEON_IPSEC_H_
 
+#define OCT_EVENT_TYPE_FRM_INL_DEV 0x0
+#define OCT_EVENT_TYPE_FRM_CPU	   0x1
+
 #define OCT_ROC_SALT_LEN 4
 #define OCT_EXT_HDR_FROM_VLIB_BUFFER(x)                                       \
   (((oct_ipsec_outbound_pkt_meta_t *) (x)) - 1)

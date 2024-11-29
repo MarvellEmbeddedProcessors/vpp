@@ -173,6 +173,8 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
 
   log_debug (dev, "RQ %u initialised", crq->cq.qid);
   /* Configure inline device rq */
+  crq->rq.tag_mask =
+    0x0FF00000 | ((uint32_t) OCT_EVENT_TYPE_FRM_INL_DEV << 28);
   rrv = roc_nix_inl_dev_rq_get (&crq->rq, 0 /* disable */);
   if (rrv)
     {
