@@ -100,6 +100,8 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
   struct npa_pool_s npapool = { .nat_align = 1,
 				.buf_offset = OCT_EXT_HDR_SIZE / ROC_ALIGN };
 
+  ASSERT (!(vm->buffer_main->ext_hdr_size % ROC_ALIGN));
+
   if (!om->use_single_rx_aura || !om->aura_handle)
     {
       if ((rrv = roc_npa_pool_create (&crq->aura_handle, bp->alloc_size,
@@ -135,15 +137,16 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
   log_debug (dev, "CQ %u initialised (qmask 0x%x wdata 0x%lx)", crq->cq.qid,
 	     crq->cq.qmask, crq->cq.wdata);
 
-  crq->hdr_off = vm->buffer_main->ext_hdr_size;
+  crq->hdr_off =
+    vm->buffer_main->ext_hdr_size - (npapool.buf_offset * ROC_ALIGN);
 
   crq->rq = (struct roc_nix_rq){
     .qid = rxq->queue_id,
     .cqid = crq->cq.qid,
     .aura_handle = crq->aura_handle,
-    .first_skip = sizeof (vlib_buffer_t),
-    .later_skip = sizeof (vlib_buffer_t),
-    .lpb_size = bp->data_size + sizeof (vlib_buffer_t),
+    .first_skip = crq->hdr_off + sizeof (vlib_buffer_t),
+    .later_skip = crq->hdr_off + sizeof (vlib_buffer_t),
+    .lpb_size = bp->data_size + crq->hdr_off + sizeof (vlib_buffer_t),
     .flow_tag_width = 32,
   };
 
@@ -215,7 +218,8 @@ oct_txq_init (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
   oct_device_t *cd = vnet_dev_get_data (dev);
   struct roc_nix *nix = cd->nix;
   struct npa_aura_s aura = {};
-  struct npa_pool_s npapool = { .nat_align = 1 };
+  struct npa_pool_s npapool = { .nat_align = 1,
+				.buf_offset = OCT_EXT_HDR_SIZE / ROC_ALIGN };
   int rrv;
   vlib_buffer_pool_t *bp = vlib_get_buffer_pool (vm, 0);
 
@@ -250,7 +254,8 @@ oct_txq_init (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
   log_debug (dev, "SQ initialised, qid %u, nb_desc %u, max_sqe_sz %u",
 	     ctq->sq.qid, ctq->sq.nb_desc, ctq->sq.max_sqe_sz);
 
-  ctq->hdr_off = vm->buffer_main->ext_hdr_size;
+  ctq->hdr_off =
+    vm->buffer_main->ext_hdr_size - (npapool.buf_offset * ROC_ALIGN);
 
   if (ctq->sq.lmt_addr == 0)
     ctq->sq.lmt_addr = (void *) nix->lmt_base;
