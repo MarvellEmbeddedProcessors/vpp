@@ -291,16 +291,14 @@ oct_esp_encrypt_tun (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  current_sa0_index = sa0_index;
 	}
 
+      /*
+       * If this is the first packet to use this SA, assign thread based
+       * on SA index. Don't need to do core-handoff on OCTEON as send queue
+       * is used based on thread index.
+       */
+
       if (PREDICT_FALSE (0XFFFF == sa0->thread_index))
-	{
-	  /*
-	   * If this is the first packet to use this SA, claim the SA
-	   * for this thread. Use atomic operation as this could happen
-	   * simultaneously on another thread
-	   */
-	  clib_atomic_cmp_and_swap (&sa0->thread_index, ~0,
-				    ipsec_sa_assign_thread (vm->thread_index));
-	}
+	sa0->thread_index = (sa0_index % vlib_num_workers ()) + 1;
 
       vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
       next[0] = thread0_next + sa0->thread_index;
