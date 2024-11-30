@@ -94,6 +94,14 @@ static vnet_dev_arg_t oct_port_args[] = {
     .default_val.boolean = false,
   },
   {
+    .id = OCT_PORT_ARG_EN_ETH_PAUSE_FRAME,
+    .name = "eth-pause-frame",
+    .desc = "Enable ethernet pause frame support, applicable to network "
+	    "devices only",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = false,
+  },
+  {
     .id = OCT_PORT_ARG_END,
     .name = "end",
     .desc = "Argument end",
