@@ -144,6 +144,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   vnet_dev_port_interfaces_t *ifs = port->interfaces;
   u8 mac_addr[PLT_ETHER_ADDR_LEN];
   struct roc_nix *nix = cd->nix;
+  bool is_allmulti_enable = false, is_pause_frame_enable = false;
   vnet_dev_rv_t rv;
   u32 total_sz = 0;
   int rrv;
@@ -177,17 +178,22 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 	}
     }
 
-  /* Enable allmulti mode, if set by arg */
   foreach_vnet_dev_port_args (arg, port)
     {
       if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE && vnet_dev_arg_get_bool (arg))
+	is_allmulti_enable = true;
+      if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
+	  vnet_dev_arg_get_bool (arg))
+	is_pause_frame_enable = true;
+    }
+
+  /* Enable allmulti mode, if set by arg */
+  if (is_allmulti_enable)
+    {
+      if ((rrv = roc_nix_npc_mcast_config (nix, true, false)))
 	{
-	  if ((rrv = roc_nix_npc_mcast_config (nix, true, false)))
-	    {
-	      oct_port_deinit (vm, port);
-	      return oct_roc_err (dev, rrv, "roc_nix_mac_addr_set failed");
-	    }
-	  break;
+	  oct_port_deinit (vm, port);
+	  return oct_roc_err (dev, rrv, "roc_nix_mac_addr_set failed");
 	}
     }
 
@@ -259,7 +265,9 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
 
   /* Configure pause frame flow control*/
-  if ((rv = oct_port_pause_flow_control_init (vm, port)))
+
+  if (is_pause_frame_enable &&
+      (rv = oct_port_pause_flow_control_init (vm, port)))
     {
       oct_port_deinit (vm, port);
       return rv;
