@@ -95,7 +95,7 @@ static vnet_dev_arg_t oct_port_args[] = {
   },
   {
     .id = OCT_PORT_ARG_EN_ETH_PAUSE_FRAME,
-    .name = "eth-pause-frame",
+    .name = "eth_pause_frame",
     .desc = "Enable ethernet pause frame support, applicable to network "
 	    "devices only",
     .type = VNET_DEV_ARG_TYPE_BOOL,
@@ -241,7 +241,7 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     .rx_queue = {
       .config = {
         .data_size = sizeof (oct_rxq_t),
-        .default_size = 8192,
+        .default_size = 1024,
         .multiplier = 32,
         .min_size = 256,
         .max_size = 16384,
@@ -255,7 +255,7 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     .tx_queue = {
       .config = {
         .data_size = sizeof (oct_txq_t),
-        .default_size = 8192,
+        .default_size = 1024,
         .multiplier = 32,
         .min_size = 256,
         .max_size = 16384,
@@ -291,7 +291,6 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
   pool_get (om->oct_dev, oct_dev);
   oct_dev[0] = vnet_dev_get_data (dev);
   oct_dev[0]->nix_idx = oct_dev - om->oct_dev;
-  log_info (dev, "veclen %d %d", vec_len (om->oct_dev), oct_dev[0]->nix_idx);
 
   return VNET_DEV_OK;
 }

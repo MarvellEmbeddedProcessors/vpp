@@ -89,6 +89,7 @@ vnet_dev_rv_t
 oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
 {
   oct_main_t *om = &oct_main;
+  oct_inl_dev_main_t *inl_main = &oct_inl_dev_main;
   oct_rxq_t *crq = vnet_dev_get_rx_queue_data (rxq);
   vnet_dev_t *dev = rxq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
@@ -124,6 +125,9 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
     .nb_desc = rxq->size,
     .qid = rxq->queue_id,
   };
+
+  if (inl_main->inl_dev)
+    crq->cq.nb_desc = clib_max (crq->cq.nb_desc, 4096);
 
   if ((rrv = roc_nix_cq_init (nix, &crq->cq)))
     {
