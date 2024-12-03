@@ -169,6 +169,13 @@ typedef struct
   u8 started;
 } oct_crypto_main_t;
 
+static_always_inline bool
+oct_hw_ctx_cache_enable (void)
+{
+  return roc_errata_cpt_hang_on_mixed_ctx_val () ||
+	 roc_model_is_cn10ka_b0 () || roc_model_is_cn10kb_a0 ();
+}
+
 extern oct_crypto_main_t oct_crypto_main;
 
 void oct_crypto_key_del_handler (vlib_main_t *vm,

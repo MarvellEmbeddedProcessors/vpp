@@ -1165,6 +1165,10 @@ oct_cpt_inst_w7_get (oct_crypto_sess_t *sess, struct roc_cpt *roc_cpt)
 
   inst_w7.u64 = 0;
   inst_w7.s.cptr = (u64) &sess->cpt_ctx.se_ctx.fctx;
+
+  if (oct_hw_ctx_cache_enable ())
+    inst_w7.s.ctx_val = 1;
+
   /* Set the engine group */
   inst_w7.s.egrp = roc_cpt->eng_grp[CPT_ENG_TYPE_IE];
 
@@ -1393,6 +1397,9 @@ oct_crypto_session_init (vlib_main_t *vm, oct_crypto_sess_t *session,
 
   session->cpt_inst_w7 =
     oct_cpt_inst_w7_get (session, session->crypto_dev->roc_cpt);
+
+  if (oct_hw_ctx_cache_enable ())
+    roc_se_ctx_init (&session->cpt_ctx);
 
   session->initialised = 1;
 
