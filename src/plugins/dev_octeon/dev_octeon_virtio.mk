@@ -30,7 +30,7 @@ get_filename_component(DAO_DPDK_LIB_DIR ${DAO_DPDK_LIB} DIRECTORY)
 
 link_directories(${DAO_DPDK_LIB_DIR})
 string_append(DAO_LINK_FLAGS "-L${DAO_DPDK_LIB_DIR}")
-string_append(DAO_LINK_FLAGS "-lnuma -lz -lelf -lpcap -ljansson")
+string_append(DAO_LINK_FLAGS "-lnuma -lz -lelf -lpcap -ljansson -lfdt")
 if(OPENSSL_FOUND)
   string_append(DAO_LINK_FLAGS "-lssl")
   string_append(DAO_LINK_FLAGS "-lcrypto")
