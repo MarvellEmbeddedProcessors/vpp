@@ -70,7 +70,10 @@ typedef struct tls_cxt_id_
 STATIC_ASSERT (sizeof (tls_ctx_id_t) <= TRANSPORT_CONN_ID_LEN,
 	       "ctx id must be less than TRANSPORT_CONN_ID_LEN");
 
-#define foreach_tls_conn_flags _ (HO_DONE, "ho done")
+#define foreach_tls_conn_flags                                                \
+  _ (HO_DONE, "ho-done")                                                      \
+  _ (ASYNC_WR, "async-write")                                                 \
+  _ (ASYNC_RD, "async-read")
 
 typedef enum tls_conn_flags_bit_
 {
@@ -113,8 +116,6 @@ typedef struct tls_ctx_
   u8 is_migrated;
   tls_conn_flags_t flags;
   u8 *srv_hostname;
-  u32 evt_index[SSL_ASYNC_EVT_MAX];
-  u32 total_write;
   u32 ckpair_index;
   transport_proto_t tls_type;
   bool in_async_read;

@@ -695,8 +695,12 @@ tls_app_session_cleanup (session_t * s, session_cleanup_ntf_t ntf)
     }
 
   ctx = tls_ctx_get (s->opaque);
+  TLS_DBG (1, "SESSION_CLEANUP_CTX: %p", ctx);
   if (!ctx->no_app_session)
-    session_transport_delete_notify (&ctx->connection);
+    {
+      session_transport_delete_notify (&ctx->connection);
+      TLS_DBG (1, "NO_APP_SESSION_CLEANUP_CTX: %p", ctx);
+    }
   tls_ctx_free (ctx);
 }
 

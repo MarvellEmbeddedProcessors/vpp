@@ -56,6 +56,9 @@ typedef struct tls_ctx_openssl_
   tls_ctx_t ctx;			/**< First */
   u32 openssl_ctx_index;
   SSL_CTX *client_ssl_ctx;
+  u32 evt_index[SSL_ASYNC_EVT_MAX];
+  bool evt_alloc_flag[SSL_ASYNC_EVT_MAX];
+  u32 total_async_write;
   SSL *ssl;
   BIO *rbio;
   BIO *wbio;
@@ -90,15 +93,13 @@ typedef struct openssl_main_
   u32 max_pipelines;
 } openssl_main_t;
 
-typedef int openssl_resume_handler (tls_ctx_t * ctx, session_t * tls_session);
+typedef int openssl_resume_handler (void *event, void *session);
+typedef int (*async_handlers) (void *event, void *session);
 
 tls_ctx_t *openssl_ctx_get_w_thread (u32 ctx_index, u8 thread_index);
-int vpp_tls_async_init_events (tls_ctx_t *ctx, openssl_resume_handler *handler,
-			       session_t *session);
-int vpp_tls_async_update_event (tls_ctx_t *ctx, int eagain,
-				ssl_async_evt_type_t type);
-int vpp_tls_async_enqueue_event (tls_ctx_t *ctx, int evt_type,
-				 transport_send_params_t *sp, int size);
+int vpp_tls_async_init_event (tls_ctx_t *ctx, openssl_resume_handler *handler,
+			      transport_send_params_t *sp, session_t *session,
+			      ssl_async_evt_type_t evt_type, int wr_size);
 int tls_async_openssl_callback (SSL * s, void *evt);
 int openssl_evt_free (int event_idx, u8 thread_index);
 void openssl_polling_start (ENGINE * engine);
@@ -111,6 +112,9 @@ int openssl_read_from_ssl_into_fifo (svm_fifo_t *f, SSL *ssl);
 void openssl_handle_handshake_failure (tls_ctx_t *ctx);
 void openssl_confirm_app_close (tls_ctx_t *ctx);
 
+int tls_async_write_event_handler (void *event, void *session);
+int tls_async_read_event_handler (void *event, void *session);
+int tls_async_handshake_event_handler (void *event, void *session);
 #endif /* SRC_PLUGINS_TLSOPENSSL_TLS_OPENSSL_H_ */
 
 /*
