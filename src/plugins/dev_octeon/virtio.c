@@ -432,5 +432,6 @@ VNET_DEV_REGISTER_DRIVER (octeon_virtio) = {
 
 VLIB_PLUGIN_REGISTER () = {
   .version = VPP_BUILD_VER,
-  .description = "dev_octeon_virtio",
+  .description = "OCTEON virtio device",
+  .default_disabled = 1,
 };
