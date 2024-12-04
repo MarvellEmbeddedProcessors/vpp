@@ -1064,12 +1064,11 @@ oct_crypto_cpt_hmac_prep (u32 flags, u64 d_offs, u64 d_lens,
 }
 
 static_always_inline void
-oct_crypto_fill_fc_params (oct_crypto_sess_t *sess, struct cpt_inst_s *inst,
-			   const bool is_aead, u8 aad_length, u8 *payload,
-			   vnet_crypto_async_frame_elt_t *elts, void *mdata,
-			   u32 cipher_data_length, u32 cipher_data_offset,
-			   u32 auth_data_length, u32 auth_data_offset,
-			   vlib_buffer_t *b, u16 adj_len)
+oct_crypto_scatter_gather_mode (
+  oct_crypto_sess_t *sess, struct cpt_inst_s *inst, const bool is_aead,
+  u8 aad_length, u8 *payload, vnet_crypto_async_frame_elt_t *elts, void *mdata,
+  u32 cipher_data_length, u32 cipher_data_offset, u32 auth_data_length,
+  u32 auth_data_offset, vlib_buffer_t *b, u16 adj_len)
 {
   struct roc_se_fc_params fc_params = { 0 };
   struct roc_se_ctx *ctx = &sess->cpt_ctx;
@@ -1307,6 +1306,13 @@ oct_crypto_link_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
       return -1;
     }
 
+  sess->cpt_ctx.template_w4.s.opcode_major = ROC_SE_MAJOR_OP_FC;
+
+  if (sess->cpt_op == VNET_CRYPTO_OP_TYPE_DECRYPT)
+    sess->cpt_ctx.template_w4.s.opcode_minor |= ROC_SE_FC_MINOR_OP_DECRYPT;
+  else
+    sess->cpt_ctx.template_w4.s.opcode_minor |= ROC_SE_FC_MINOR_OP_ENCRYPT;
+
   return 0;
 }
 
@@ -1363,6 +1369,13 @@ oct_crypto_aead_session_update (vlib_main_t *vm, oct_crypto_sess_t *sess,
       return -1;
     }
 
+  sess->cpt_ctx.template_w4.s.opcode_major = ROC_SE_MAJOR_OP_FC;
+
+  if (sess->cpt_op == VNET_CRYPTO_OP_TYPE_DECRYPT)
+    sess->cpt_ctx.template_w4.s.opcode_minor |= ROC_SE_FC_MINOR_OP_DECRYPT;
+  else
+    sess->cpt_ctx.template_w4.s.opcode_minor |= ROC_SE_FC_MINOR_OP_ENCRYPT;
+
   if (enc_type == ROC_SE_CHACHA20)
     sess->cpt_ctx.template_w4.s.opcode_minor |= BIT (5);
 
@@ -1416,6 +1429,138 @@ oct_crypto_update_frame_error_status (vnet_crypto_async_frame_t *f,
     f->elts[i].status = s;
 
   f->state = VNET_CRYPTO_FRAME_STATE_NOT_PROCESSED;
+}
+
+static_always_inline void
+oct_crypto_direct_mode_linked (vlib_buffer_t *buffer, struct cpt_inst_s *inst,
+			       oct_crypto_sess_t *sess,
+			       oct_crypto_inflight_req_t *infl_req, u8 aad_len)
+{
+  u32 encr_offset, auth_offset, iv_offset;
+  vnet_crypto_async_frame_elt_t *elts;
+  union cpt_inst_w4 cpt_inst_w4;
+  u64 *offset_control_word;
+  u32 crypto_total_length;
+  u32 auth_dlen, enc_dlen;
+  u32 enc_auth_len;
+
+  elts = infl_req->fe;
+  enc_auth_len = elts->crypto_total_length + elts->integ_length_adj;
+  crypto_total_length = elts->crypto_total_length;
+
+  if (sess->cpt_op == VNET_CRYPTO_OP_TYPE_DECRYPT)
+    {
+      /*
+       * Position the offset control word so that it does not
+       * overlap with the IV.
+       */
+      offset_control_word = (void *) (buffer->data) - ROC_SE_OFF_CTRL_LEN - 4;
+
+      iv_offset =
+	(void *) elts->iv - (void *) offset_control_word - ROC_SE_OFF_CTRL_LEN;
+    }
+  else
+    {
+      offset_control_word = (void *) (elts->iv) - ROC_SE_OFF_CTRL_LEN;
+      iv_offset = 0;
+    }
+
+  encr_offset = (void *) (buffer->data + elts->crypto_start_offset) -
+		(void *) offset_control_word - ROC_SE_OFF_CTRL_LEN;
+  auth_offset = (void *) (buffer->data + elts->integ_start_offset) -
+		(void *) offset_control_word - ROC_SE_OFF_CTRL_LEN;
+  *offset_control_word = clib_host_to_net_u64 (
+    ((u64) encr_offset << 16) | ((u64) iv_offset << 8) | ((u64) auth_offset));
+
+  cpt_inst_w4.u64 = sess->cpt_ctx.template_w4.u64;
+
+  cpt_inst_w4.s.param1 = crypto_total_length;
+  cpt_inst_w4.s.param2 = enc_auth_len;
+
+  auth_dlen = auth_offset + enc_auth_len + ROC_SE_OFF_CTRL_LEN;
+  enc_dlen = encr_offset + crypto_total_length + ROC_SE_OFF_CTRL_LEN;
+
+  if (sess->cpt_op == VNET_CRYPTO_OP_TYPE_DECRYPT)
+    cpt_inst_w4.s.dlen = auth_dlen + sess->cpt_ctx.mac_len;
+  else
+    {
+      /*
+       * In the case of ESN, 4 bytes of the seqhi will be stored at the end of
+       * the cipher. This data must be overwritten by the digest data during
+       * the dequeue process.
+       */
+      if (auth_dlen > enc_dlen)
+	infl_req->esn_enabled = true;
+
+      cpt_inst_w4.s.dlen = auth_dlen;
+    }
+
+  infl_req->mac_len = sess->cpt_ctx.mac_len;
+
+  inst->dptr = (uint64_t) offset_control_word;
+  inst->rptr = (uint64_t) ((void *) offset_control_word + ROC_SE_OFF_CTRL_LEN);
+  inst->w4.u64 = cpt_inst_w4.u64;
+}
+
+static_always_inline void
+oct_crypto_direct_mode_aead (vlib_buffer_t *buffer, struct cpt_inst_s *inst,
+			     oct_crypto_sess_t *sess,
+			     oct_crypto_inflight_req_t *infl_req, u8 aad_len)
+{
+  u32 encr_offset, auth_offset, iv_offset;
+  u32 auth_copy_offset, iv_copy_offset;
+  vnet_crypto_async_frame_elt_t *elts;
+  union cpt_inst_w4 cpt_inst_w4;
+  u64 *offset_control_word;
+  u32 crypto_total_length;
+
+  elts = infl_req->fe;
+  crypto_total_length = elts->crypto_total_length;
+
+  ((u32 *) elts->iv)[3] = clib_host_to_net_u32 (0x1);
+
+  offset_control_word = (void *) (elts->aad) - ROC_SE_OFF_CTRL_LEN;
+  encr_offset = (void *) (buffer->data + elts->crypto_start_offset) -
+		(void *) offset_control_word - ROC_SE_OFF_CTRL_LEN;
+  iv_offset = elts->iv - elts->aad;
+  auth_offset = encr_offset - aad_len;
+
+  *offset_control_word = clib_host_to_net_u64 (
+    ((u64) encr_offset << 16) | ((u64) iv_offset << 8) | ((u64) auth_offset));
+
+  cpt_inst_w4.u64 = sess->cpt_ctx.template_w4.u64;
+
+  cpt_inst_w4.s.param1 = crypto_total_length;
+  cpt_inst_w4.s.param2 = crypto_total_length + aad_len;
+
+  if (sess->cpt_op == VNET_CRYPTO_OP_TYPE_DECRYPT)
+    cpt_inst_w4.s.dlen = encr_offset + elts->crypto_total_length +
+			 ROC_SE_OFF_CTRL_LEN + sess->cpt_ctx.mac_len;
+  else
+    cpt_inst_w4.s.dlen =
+      encr_offset + elts->crypto_total_length + ROC_SE_OFF_CTRL_LEN;
+
+  inst->dptr = (uint64_t) offset_control_word;
+  inst->rptr = (uint64_t) ((void *) offset_control_word + ROC_SE_OFF_CTRL_LEN);
+  inst->w4.u64 = cpt_inst_w4.u64;
+
+  /*
+   * CPT hardware requires the AAD to be followed by the cipher packet.
+   * Therefore, maintain a copy of the AAD and IV in the inflight request,
+   * and write the AAD in front of the cipher data before submission.
+   */
+  auth_copy_offset = encr_offset - sess->cpt_ctx.mac_len;
+  iv_copy_offset = encr_offset - 8;
+
+  clib_memcpy_fast (infl_req->aad,
+		    ((void *) inst->dptr) + auth_copy_offset + 8, 8);
+  clib_memcpy_fast (infl_req->iv, ((void *) inst->dptr) + iv_copy_offset + 8,
+		    8);
+  clib_memcpy_fast (((void *) inst->dptr) + encr_offset + ROC_SE_OFF_CTRL_LEN -
+		      aad_len,
+		    elts->aad, aad_len);
+
+  infl_req->aead_algo = true;
 }
 
 static_always_inline int
@@ -1486,43 +1631,58 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 
       if (is_aead)
 	{
-	  dptr_start_ptr =
-	    (u64) (buffer->data + (elts->crypto_start_offset - aad_iv));
-	  curr_ptr = (u64) (buffer->data + buffer->current_data);
-	  adj_len = (u16) (dptr_start_ptr - curr_ptr);
+	  if (buffer->flags & VLIB_BUFFER_NEXT_PRESENT)
+	    {
+	      dptr_start_ptr =
+		(u64) (buffer->data + (elts->crypto_start_offset - aad_iv));
+	      curr_ptr = (u64) (buffer->data + buffer->current_data);
+	      adj_len = (u16) (dptr_start_ptr - curr_ptr);
 
-	  crypto_total_length = elts->crypto_total_length;
-	  crypto_start_offset = aad_iv;
-	  integ_start_offset = 0;
-
-	  oct_crypto_fill_fc_params (
-	    sess, inst + i, is_aead, aad_len, (u8 *) dptr_start_ptr, elts,
-	    ((oct_crypto_scatter_gather_t *) (sg_data)) + enq_tail,
-	    crypto_total_length /* cipher_len */,
-	    crypto_start_offset /* cipher_offset */, 0 /* auth_len */,
-	    integ_start_offset /* auth_off */, buffer, adj_len);
+	      crypto_total_length = elts->crypto_total_length;
+	      crypto_start_offset = aad_iv;
+	      integ_start_offset = 0;
+	      oct_crypto_scatter_gather_mode (
+		sess, inst + i, is_aead, aad_len, (u8 *) dptr_start_ptr, elts,
+		((oct_crypto_scatter_gather_t *) (sg_data)) + enq_tail,
+		crypto_total_length /* cipher_len */,
+		crypto_start_offset /* cipher_offset */, 0 /* auth_len */,
+		integ_start_offset /* auth_off */, buffer, adj_len);
+	    }
+	  else
+	    {
+	      oct_crypto_direct_mode_aead (buffer, inst + i, sess, infl_req,
+					   aad_len);
+	    }
 	}
       else
 	{
-	  dptr_start_ptr = (u64) (buffer->data + elts->integ_start_offset);
+	  if (buffer->flags & VLIB_BUFFER_NEXT_PRESENT)
+	    {
+	      dptr_start_ptr = (u64) (buffer->data + elts->integ_start_offset);
 
-	  enc_auth_len = elts->crypto_total_length + elts->integ_length_adj;
+	      curr_ptr = (u64) (buffer->data + buffer->current_data);
+	      adj_len = (u16) (dptr_start_ptr - curr_ptr);
 
-	  curr_ptr = (u64) (buffer->data + buffer->current_data);
-	  adj_len = (u16) (dptr_start_ptr - curr_ptr);
+	      crypto_start_offset =
+		elts->crypto_start_offset - elts->integ_start_offset;
+	      integ_start_offset = 0;
+	      enc_auth_len =
+		elts->crypto_total_length + elts->integ_length_adj;
+	      crypto_total_length = elts->crypto_total_length;
 
-	  crypto_total_length = elts->crypto_total_length;
-	  crypto_start_offset =
-	    elts->crypto_start_offset - elts->integ_start_offset;
-	  integ_start_offset = 0;
-
-	  oct_crypto_fill_fc_params (
-	    sess, inst + i, is_aead, aad_len, (u8 *) dptr_start_ptr, elts,
-	    ((oct_crypto_scatter_gather_t *) (sg_data)) + enq_tail,
-	    crypto_total_length /* cipher_len */,
-	    crypto_start_offset /* cipher_offset */,
-	    enc_auth_len /* auth_len */, integ_start_offset /* auth_off */,
-	    buffer, adj_len);
+	      oct_crypto_scatter_gather_mode (
+		sess, inst + i, is_aead, aad_len, (u8 *) dptr_start_ptr, elts,
+		((oct_crypto_scatter_gather_t *) (sg_data)) + enq_tail,
+		crypto_total_length /* cipher_len */,
+		crypto_start_offset /* cipher_offset */,
+		enc_auth_len /* auth_len */, integ_start_offset /* auth_off */,
+		buffer, adj_len);
+	    }
+	  else
+	    {
+	      oct_crypto_direct_mode_linked (buffer, inst + i, sess, infl_req,
+					     aad_len);
+	    }
 	}
 
       inst[i].w7.u64 = sess->cpt_inst_w7;
@@ -1630,6 +1790,7 @@ oct_crypto_frame_dequeue (vlib_main_t *vm, u32 *nb_elts_processed,
   vnet_crypto_async_frame_t *frame;
   volatile union cpt_res_s *res;
   bool last_elts_processed;
+  vlib_buffer_t *buffer;
 
   pend_q = &ocm->pend_q[vlib_get_thread_index ()];
 
@@ -1656,6 +1817,24 @@ oct_crypto_frame_dequeue (vlib_main_t *vm, u32 *nb_elts_processed,
 	  else
 	    status = fe->status = VNET_CRYPTO_OP_STATUS_FAIL_ENGINE_ERR;
 	}
+
+      buffer =
+	vlib_get_buffer (vm, infl_req->frame->buffer_indices[infl_req->index]);
+
+      /*
+       * For AEAD, copy the AAD and IV back to their original positions.
+       * If ESN is enabled (in case of linked algo), overwrite the ESN
+       * seqhi at the end of the cipher with the digest data.
+       */
+      if (infl_req->aead_algo)
+	{
+	  clib_memcpy_fast (buffer->data + fe->crypto_start_offset - 8,
+			    infl_req->iv, 8);
+	  clib_memcpy_fast (buffer->data + fe->crypto_start_offset - 16,
+			    infl_req->aad, 8);
+	}
+      else if (infl_req->esn_enabled)
+	clib_memcpy_fast (fe->digest, fe->digest + 4, infl_req->mac_len);
 
       clib_memset ((void *) &infl_req->res, 0, sizeof (union cpt_res_s));
       last_elts_processed = infl_req->last_elts;

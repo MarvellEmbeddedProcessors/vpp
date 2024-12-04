@@ -128,6 +128,17 @@ typedef struct
   vnet_crypto_async_frame_t *frame;
   /** Async frame element */
   vnet_crypto_async_frame_elt_t *fe;
+  /** AAD meta data */
+  u8 aad[8];
+  /** IV meta data */
+  u8 iv[16];
+  /** Digest len */
+  u8 mac_len;
+  /** aead */
+  bool aead_algo;
+  /** Set when encrypting linked algo with esn.
+   * To move digest data */
+  bool esn_enabled;
   /** Set if this is last element in frame */
   bool last_elts;
   /** Index of element in frame */
