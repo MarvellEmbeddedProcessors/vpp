@@ -361,7 +361,11 @@ oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_buffer_t *b, u32 ilen,
 static_always_inline u8
 oct_is_packet_from_cpt (union nix_rx_parse_u *rxp)
 {
+#ifdef PLATFORM_OCTEON9
+  return 0;
+#else
   return rxp->chan >> 11;
+#endif
 }
 
 static_always_inline uword
