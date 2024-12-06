@@ -670,6 +670,8 @@ oct_ipsec_session_destroy (u32 sa_index)
     }
 
   clib_memset (session, 0, sizeof (oct_ipsec_session_t));
+  pool_put (oim->inline_ipsec_sessions, session);
+
   return 0;
 }
 
