@@ -373,7 +373,7 @@ oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
   if ((rv = oct_init_ipsec_backend (vm, dev)))
     return rv;
 
-  oct_main.use_single_rx_aura = 1;
+  oct_main.use_single_rx_tx_aura = 1;
   oct_main.inl_dev_initialized = 1;
 
   return VNET_DEV_OK;
