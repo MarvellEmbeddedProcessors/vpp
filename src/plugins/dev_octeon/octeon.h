@@ -38,6 +38,7 @@ typedef enum
 {
   OCT_PORT_ARG_ALLMULTI_MODE = 1,
   OCT_PORT_ARG_EN_ETH_PAUSE_FRAME,
+  OCT_PORT_ARG_SWITCH_HDR_TYPE,
   OCT_PORT_ARG_END
 } oct_port_args_t;
 

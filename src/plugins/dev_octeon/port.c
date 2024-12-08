@@ -136,6 +136,27 @@ oct_port_pause_flow_control_init (vlib_main_t *vm, vnet_dev_port_t *port)
   return VNET_DEV_OK;
 }
 
+static u16
+oct_parse_switch_hdr_type (const char *value)
+{
+  if (strcmp (value, "higig2") == 0)
+    return ROC_PRIV_FLAGS_HIGIG;
+
+  if (strcmp (value, "dsa") == 0)
+    return ROC_PRIV_FLAGS_EDSA;
+
+  if (strcmp (value, "chlen90b") == 0)
+    return ROC_PRIV_FLAGS_LEN_90B;
+
+  if (strcmp (value, "exdsa") == 0)
+    return ROC_PRIV_FLAGS_EXDSA;
+
+  if (strcmp (value, "vlan_exdsa") == 0)
+    return ROC_PRIV_FLAGS_VLAN_EXDSA;
+
+  return 0;
+}
+
 vnet_dev_rv_t
 oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 {
@@ -149,6 +170,19 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   int rrv;
 
   log_notice (dev, "port init: port %u", port->port_id);
+
+  foreach_vnet_dev_port_args (arg, port)
+    {
+      if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE && vnet_dev_arg_get_bool (arg))
+	is_allmulti_enable = true;
+      if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
+	  vnet_dev_arg_get_bool (arg))
+	is_pause_frame_enable = true;
+      if (arg->id == OCT_PORT_ARG_SWITCH_HDR_TYPE &&
+	  vnet_dev_arg_get_string (arg))
+	cp->npc.switch_header_type =
+	  oct_parse_switch_hdr_type ((char *) vnet_dev_arg_get_string (arg));
+    }
 
   if ((rrv = roc_nix_lf_alloc (nix, port->intf.num_rx_queues,
 			       port->intf.num_tx_queues, rxq_cfg)))
@@ -177,20 +211,6 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 	}
     }
 
-  foreach_vnet_dev_port_args (arg, port)
-    {
-      if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE && vnet_dev_arg_get_bool (arg))
-	is_allmulti_enable = true;
-      if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
-	  vnet_dev_arg_get_bool (arg))
-	is_pause_frame_enable = true;
-    }
-  if ((rrv = roc_nix_npc_mcast_config (nix, true, false)))
-    {
-      oct_port_deinit (vm, port);
-      return oct_roc_err (dev, rrv, "roc_nix_mac_addr_set failed");
-    }
-
   /* Enable allmulti mode, if set by arg */
   if (is_allmulti_enable)
     {
@@ -213,6 +233,13 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     {
       oct_port_deinit (vm, port);
       return oct_roc_err (dev, rrv, "roc_nix_tm_hierarchy_enable() failed");
+    }
+
+  rrv = roc_nix_switch_hdr_set (nix, cp->npc.switch_header_type, 0, 0, 0);
+  if (rrv)
+    {
+      oct_port_deinit (vm, port);
+      return oct_roc_err (dev, rrv, "roc_nix_switch_hdr_set() failed");
     }
 
   if ((rrv = roc_nix_rss_default_setup (nix, default_rss_flowkey)))
@@ -297,6 +324,9 @@ oct_port_deinit (vlib_main_t *vm, vnet_dev_port_t *port)
     oct_rxq_deinit (vm, q);
   foreach_vnet_dev_port_tx_queue (q, port)
     oct_txq_deinit (vm, q);
+
+  /* Disable switch hdr pkind */
+  roc_nix_switch_hdr_set (nix, 0, 0, 0, 0);
 
   if (cp->npc_initialized)
     {

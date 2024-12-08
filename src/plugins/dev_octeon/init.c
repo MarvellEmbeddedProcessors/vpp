@@ -102,6 +102,13 @@ static vnet_dev_arg_t oct_port_args[] = {
     .default_val.boolean = false,
   },
   {
+    .id = OCT_PORT_ARG_SWITCH_HDR_TYPE,
+    .name = "switch_header",
+    .desc = "Enable switch header and set specific switch header type, "
+	    "applicable to network devices only",
+    .type = VNET_DEV_ARG_TYPE_STRING,
+  },
+  {
     .id = OCT_PORT_ARG_END,
     .name = "end",
     .desc = "Argument end",
