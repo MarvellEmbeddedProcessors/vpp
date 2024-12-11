@@ -74,17 +74,25 @@
 typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (c0);
-  struct cpt_inst_s inst;
-  union cpt_res_s res;
-  u16 dlen_adj;
-  u16 sa_bytes;
-  u8 core_id;
-  u8 is_ip6;
-  bool is_sg_mode;
-  CLIB_CACHE_LINE_ALIGN_MARK (c2);
   u64 nixtx[2];
   u8 sg_buffer[128];
 } oct_ipsec_outbound_pkt_meta_t;
+
+typedef struct
+{
+  union cpt_res_s res;
+  u16 dlen_adj;
+  u16 sa_bytes;
+} oct_ipsec_outb_data_t;
+
+STATIC_ASSERT (sizeof (oct_ipsec_outb_data_t) <=
+		 STRUCT_SIZE_OF (vnet_buffer_opaque2_t, unused),
+	       "Outbound meta-data too large for vnet_buffer_opaque2_t");
+
+#define oct_ipsec_outb_data(b)                                                \
+  ((oct_ipsec_outb_data_t *) ((u8 *) (b)->opaque2 +                           \
+			      STRUCT_OFFSET_OF (vnet_buffer_opaque2_t,        \
+						unused)))
 
 typedef struct
 {

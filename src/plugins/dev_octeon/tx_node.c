@@ -718,37 +718,57 @@ oct_get_tx_vlib_buf_segs (vlib_main_t *vm, vlib_buffer_t *b)
   return n_segs;
 }
 
+static_always_inline i32
+oct_ipsec_rlen_get (oct_ipsec_encap_len_t *encap, uint32_t plen)
+{
+  uint32_t enc_payload_len;
+
+  enc_payload_len =
+    round_pow2 (plen + encap->roundup_len, encap->roundup_byte);
+
+  return encap->partial_len + enc_payload_len;
+}
+
+static_always_inline u32
+oct_ipsec_esp_add_footer_and_icv (oct_ipsec_encap_len_t *encap, u32 rlen)
+{
+  /* plain_text len + pad_bytes + ESP_footer size + icv_len */
+  return rlen + encap->icv_len - encap->partial_len;
+}
+
 void static_always_inline
 oct_prepare_ipsec_inst (vlib_main_t *vm, vlib_buffer_t *b, u64 sq_handle,
 			u64 aura_handle,
 			oct_ipsec_outbound_pkt_meta_t **pkt_meta,
-			u64 *n_dwords)
+			struct cpt_inst_s *inst, u64 *n_dwords,
+			oct_ipsec_session_t *sess)
 {
-  u8 l2_len = sizeof (ethernet_header_t);
+  u16 buffer_data_size = vlib_buffer_get_default_data_size (vm);
   struct nix_send_hdr_s *send_hdr;
   union nix_send_sg_s *sg;
   u64 n_segs;
-  struct cpt_inst_s *inst;
   u16 total_length;
-
-  pkt_meta[0] =
-    (oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b);
-
-  inst = &pkt_meta[0]->inst;
+  u16 l3_hdr_offset = vnet_buffer (b)->l3_hdr_offset;
+  u32 dlen = b->current_length + b->total_length_not_including_first_buffer -
+	     l3_hdr_offset;
+  u32 rlen = oct_ipsec_rlen_get (&sess->encap, dlen);
+  u16 dlen_adj = rlen - dlen;
+  u32 sa_bytes = oct_ipsec_esp_add_footer_and_icv (&sess->encap, rlen);
 
   send_hdr = (struct nix_send_hdr_s *) pkt_meta[0]->nixtx;
   sg = (union nix_send_sg_s *) (pkt_meta[0]->nixtx + 2);
 
-  if (pkt_meta[0]->is_sg_mode)
+  if (b->flags & VLIB_BUFFER_NEXT_PRESENT || rlen > buffer_data_size)
     {
+      ASSERT (0);
       total_length =
 	b->current_length + b->total_length_not_including_first_buffer;
+      inst->w4.u64 = sess->inst.w4.u64;
 
       n_segs = oct_ipsec_outb_prepare_sg2_list (
-	vm, b, inst, pkt_meta[0]->dlen_adj, total_length,
-	(void *) pkt_meta[0]->sg_buffer);
+	vm, b, inst, dlen_adj, total_length, (void *) pkt_meta[0]->sg_buffer);
 
-      inst->w0.u64 = (uint64_t) l2_len << 16;
+      inst->w0.u64 = (uint64_t) l3_hdr_offset << 16;
       inst->w0.u64 |= NIX_NB_SEGS_TO_SEGDW (n_segs);
       inst->w0.u64 |=
 	(((int64_t) pkt_meta[0]->nixtx - (int64_t) inst->dptr) & 0xFFFFF)
@@ -759,7 +779,16 @@ oct_prepare_ipsec_inst (vlib_main_t *vm, vlib_buffer_t *b, u64 sq_handle,
     }
   else
     {
-      b->current_length += pkt_meta[0]->dlen_adj;
+      inst->dptr = (u64) ((u8 *) vlib_buffer_get_current (b) + l3_hdr_offset);
+      inst->rptr = inst->dptr;
+      /* Set w0 nixtx_offset */
+      inst->w0.u64 |=
+	(((int64_t) pkt_meta[0]->nixtx - (int64_t) inst->dptr) & 0xFFFFF)
+	<< 32;
+      inst->w0.u64 |= 1;
+      inst->w4.u64 = sess->inst.w4.u64 | dlen;
+
+      b->current_length += dlen_adj;
       n_segs = oct_get_tx_vlib_buf_segs (vm, b);
       n_dwords[0] = oct_add_sg_list (sg, b, n_segs);
     }
@@ -767,18 +796,19 @@ oct_prepare_ipsec_inst (vlib_main_t *vm, vlib_buffer_t *b, u64 sq_handle,
   oct_add_send_hdr (send_hdr, b, aura_handle, sq_handle, n_dwords[0]);
   vlib_increment_combined_counter (
     &ipsec_sa_counters, vlib_get_thread_index (),
-    vnet_buffer (b)->ipsec.sad_index, 1, pkt_meta[0]->sa_bytes);
+    vnet_buffer (b)->ipsec.sad_index, 1, sa_bytes);
 }
 
 void static_always_inline
 oct_submit_quad_packets (u64 lmt_arg, oct_device_t *cd,
-			 oct_ipsec_outbound_pkt_meta_t **pkt_meta,
+			 struct cpt_inst_s *inst0, struct cpt_inst_s *inst1,
+			 struct cpt_inst_s *inst2, struct cpt_inst_s *inst3,
 			 u64 *n_dwords, u64 **lmt_line)
 {
-  roc_lmt_mov_seg ((void *) lmt_line[0], &pkt_meta[0]->inst, 4);
-  roc_lmt_mov_seg ((void *) lmt_line[1], &pkt_meta[1]->inst, 4);
-  roc_lmt_mov_seg ((void *) lmt_line[2], &pkt_meta[2]->inst, 4);
-  roc_lmt_mov_seg ((void *) lmt_line[3], &pkt_meta[3]->inst, 4);
+  roc_lmt_mov_seg ((void *) lmt_line[0], inst0, 4);
+  roc_lmt_mov_seg ((void *) lmt_line[1], inst1, 4);
+  roc_lmt_mov_seg ((void *) lmt_line[2], inst2, 4);
+  roc_lmt_mov_seg ((void *) lmt_line[3], inst3, 4);
 
   /* Count minus one of LMTSTs in the burst */
   lmt_arg |= 3 << 12;
@@ -1219,15 +1249,21 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 		     oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq, u16 tx_pkts,
 		     vlib_buffer_t **bufs)
 {
+  oct_ipsec_main_t *im = &oct_ipsec_main;
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
   vnet_dev_t *dev = txq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
   u32 current_sq0, current_sq1, current_sq2, current_sq3;
   u64 sq_handle0, sq_handle1, sq_handle2, sq_handle3;
   u64 aura_handle0, aura_handle1, aura_handle2, aura_handle3;
+  u32 sa0_index, sa1_index, sa2_index, sa3_index;
+  u32 current_sa0_index = ~0, current_sa1_index = ~0;
+  u32 current_sa2_index = ~0, current_sa3_index = ~0;
+  oct_ipsec_session_t *sess0 = NULL, *sess1 = NULL;
+  oct_ipsec_session_t *sess2 = NULL, *sess3 = NULL;
+  struct cpt_inst_s inst0 = { 0 }, inst1 = { 0 }, inst2 = { 0 }, inst3 = { 0 };
   u64 core_lmt_base_addr, lmt_arg, core_lmt_id;
   oct_ipsec_outbound_pkt_meta_t *pkt_meta[4];
-  oct_ipsec_outbound_pkt_meta_t *meta_hdr;
   u16 n_cpt_fc_drop = 0, n_nix_fc_drop = 0;
   u16 n_left0, n_left1, n_left2, n_left3;
   u16 n_packets;
@@ -1240,6 +1276,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_buffer_t **b;
   u64 *lmt_line[4];
   u64 n_dwords[4];
+  oct_device_t *od;
 
   b = bufs;
 
@@ -1284,18 +1321,105 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 
   while (n_packets > 3)
     {
-      meta_hdr =
+      pkt_meta[0] =
 	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[0]);
-      sq0 = meta_hdr->core_id;
-      meta_hdr =
+      pkt_meta[1] =
 	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[1]);
-      sq1 = meta_hdr->core_id;
-      meta_hdr =
+      pkt_meta[2] =
 	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[2]);
-      sq2 = meta_hdr->core_id;
-      meta_hdr =
+      pkt_meta[3] =
 	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[3]);
-      sq3 = meta_hdr->core_id;
+
+      sa0_index = vnet_buffer (b[0])->ipsec.sad_index;
+      if (sa0_index != current_sa0_index)
+	{
+	  sess0 = pool_elt_at_index (im->inline_ipsec_sessions, sa0_index);
+	  if (!sess0->inst.w7.s.cptr)
+	    {
+	      od = oct_ipsec_get_oct_device_from_outb_sa (sa0_index);
+	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[od->nix_idx];
+	    }
+	  current_sa0_index = sa0_index;
+	  ALWAYS_ASSERT (current_sa0_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      sa1_index = vnet_buffer (b[1])->ipsec.sad_index;
+      if (sa1_index != current_sa1_index)
+	{
+	  sess1 = pool_elt_at_index (im->inline_ipsec_sessions, sa1_index);
+	  if (!sess1->inst.w7.s.cptr)
+	    {
+	      od = oct_ipsec_get_oct_device_from_outb_sa (sa1_index);
+	      sess1->inst.w7.s.cptr = (u64) sess1->out_sa[od->nix_idx];
+	    }
+	  current_sa1_index = sa1_index;
+	  ALWAYS_ASSERT (current_sa0_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      sa2_index = vnet_buffer (b[2])->ipsec.sad_index;
+      if (sa2_index != current_sa2_index)
+	{
+	  sess2 = pool_elt_at_index (im->inline_ipsec_sessions, sa2_index);
+	  if (!sess2->inst.w7.s.cptr)
+	    {
+	      od = oct_ipsec_get_oct_device_from_outb_sa (sa2_index);
+	      sess2->inst.w7.s.cptr = (u64) sess2->out_sa[od->nix_idx];
+	    }
+	  current_sa2_index = sa2_index;
+	  ALWAYS_ASSERT (current_sa2_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      sa3_index = vnet_buffer (b[3])->ipsec.sad_index;
+      if (sa3_index != current_sa3_index)
+	{
+	  sess3 = pool_elt_at_index (im->inline_ipsec_sessions, sa3_index);
+	  if (!sess3->inst.w7.s.cptr)
+	    {
+	      od = oct_ipsec_get_oct_device_from_outb_sa (sa3_index);
+	      sess3->inst.w7.s.cptr = (u64) sess3->out_sa[od->nix_idx];
+	    }
+	  current_sa3_index = sa3_index;
+	  ALWAYS_ASSERT (current_sa3_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      oct_ipsec_outb_data (b[0])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      oct_ipsec_outb_data (b[1])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      oct_ipsec_outb_data (b[2])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      oct_ipsec_outb_data (b[3])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+
+      inst0.res_addr = (u64) &oct_ipsec_outb_data (b[0])->res;
+      inst1.res_addr = (u64) &oct_ipsec_outb_data (b[1])->res;
+      inst2.res_addr = (u64) &oct_ipsec_outb_data (b[2])->res;
+      inst3.res_addr = (u64) &oct_ipsec_outb_data (b[3])->res;
+
+      inst0.w2.u64 = sess0->inst.w2.u64;
+      inst1.w2.u64 = sess1->inst.w2.u64;
+      inst2.w2.u64 = sess2->inst.w2.u64;
+      inst3.w2.u64 = sess3->inst.w2.u64;
+
+      inst0.w3.u64 = (uintptr_t) (b[0]);
+      inst1.w3.u64 = (uintptr_t) (b[1]);
+      inst2.w3.u64 = (uintptr_t) (b[2]);
+      inst3.w3.u64 = (uintptr_t) (b[3]);
+
+      inst0.w3.u64 |= 0x1ULL;
+      inst1.w3.u64 |= 0x1ULL;
+      inst2.w3.u64 |= 0x1ULL;
+      inst3.w3.u64 |= 0x1ULL;
+
+      inst0.w7.u64 = sess0->inst.w7.u64;
+      inst1.w7.u64 = sess1->inst.w7.u64;
+      inst2.w7.u64 = sess2->inst.w7.u64;
+      inst3.w7.u64 = sess3->inst.w7.u64;
+
+      sq0 = sa0_index;
+      sq1 = sa1_index;
+      sq2 = sa2_index;
+      sq3 = sa3_index;
 
       quad_bit = 0;
       count = 0;
@@ -1345,15 +1469,16 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
       if (quad_bit == 0x0F)
 	{
 	  oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0,
-				  &pkt_meta[0], &n_dwords[0]);
+				  &pkt_meta[0], &inst0, &n_dwords[0], sess0);
 	  oct_prepare_ipsec_inst (vm, b[1], sq_handle1, aura_handle1,
-				  &pkt_meta[1], &n_dwords[1]);
+				  &pkt_meta[1], &inst1, &n_dwords[1], sess1);
 	  oct_prepare_ipsec_inst (vm, b[2], sq_handle2, aura_handle2,
-				  &pkt_meta[2], &n_dwords[2]);
+				  &pkt_meta[2], &inst2, &n_dwords[2], sess2);
 	  oct_prepare_ipsec_inst (vm, b[3], sq_handle3, aura_handle3,
-				  &pkt_meta[3], &n_dwords[3]);
+				  &pkt_meta[3], &inst3, &n_dwords[3], sess3);
 
-	  oct_submit_quad_packets (lmt_arg, cd, pkt_meta, n_dwords, lmt_line);
+	  oct_submit_quad_packets (lmt_arg, cd, &inst0, &inst1, &inst2, &inst3,
+				   n_dwords, lmt_line);
 
 	  n_left0 -= 1;
 	  n_left1 -= 1;
@@ -1366,9 +1491,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  if (n_left0)
 	    {
 	      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0,
-				      &pkt_meta[0], &n_dwords[0]),
-		roc_lmt_mov_seg ((void *) lmt_line[count], &pkt_meta[0]->inst,
-				 4);
+				      &pkt_meta[0], &inst0, &n_dwords[0],
+				      sess0),
+		roc_lmt_mov_seg ((void *) lmt_line[count], &inst0, 4);
 	      count++;
 	      n_left0 -= 1;
 	    }
@@ -1380,9 +1505,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  if (n_left1)
 	    {
 	      oct_prepare_ipsec_inst (vm, b[1], sq_handle1, aura_handle1,
-				      &pkt_meta[1], &n_dwords[1]);
-	      roc_lmt_mov_seg ((void *) lmt_line[count], &pkt_meta[1]->inst,
-			       4);
+				      &pkt_meta[1], &inst1, &n_dwords[1],
+				      sess1);
+	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst1, 4);
 	      if (count)
 		lmt_arg |= (n_dwords[1] - 1) << (19 + (3 * (count - 1)));
 	      count++;
@@ -1396,9 +1521,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  if (n_left2)
 	    {
 	      oct_prepare_ipsec_inst (vm, b[2], sq_handle2, aura_handle2,
-				      &pkt_meta[2], &n_dwords[2]);
-	      roc_lmt_mov_seg ((void *) lmt_line[count], &pkt_meta[2]->inst,
-			       4);
+				      &pkt_meta[2], &inst2, &n_dwords[2],
+				      sess2);
+	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst2, 4);
 	      if (count)
 		lmt_arg |= (n_dwords[2] - 1) << (19 + (3 * (count - 1)));
 	      count++;
@@ -1412,9 +1537,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  if (n_left3)
 	    {
 	      oct_prepare_ipsec_inst (vm, b[3], sq_handle3, aura_handle3,
-				      &pkt_meta[3], &n_dwords[3]);
-	      roc_lmt_mov_seg ((void *) lmt_line[count], &pkt_meta[3]->inst,
-			       4);
+				      &pkt_meta[3], &inst3, &n_dwords[3],
+				      sess3);
+	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst3, 4);
 	      if (count)
 		lmt_arg |= (n_dwords[3] - 1) << (19 + (3 * (count - 1)));
 	      count++;
@@ -1443,9 +1568,30 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 
   while (n_packets)
     {
-      meta_hdr =
+      pkt_meta[0] =
 	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[0]);
-      sq0 = meta_hdr->core_id;
+      sa0_index = vnet_buffer (b[0])->ipsec.sad_index;
+      if (sa0_index != current_sa0_index)
+	{
+	  sess0 = pool_elt_at_index (im->inline_ipsec_sessions, sa0_index);
+	  if (!sess0->inst.w7.s.cptr)
+	    {
+	      od = oct_ipsec_get_oct_device_from_outb_sa (sa0_index);
+	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[od->nix_idx];
+	    }
+	  current_sa0_index = sa0_index;
+	  ALWAYS_ASSERT (current_sa0_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      oct_ipsec_outb_data (b[0])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      inst0.res_addr = (u64) &oct_ipsec_outb_data (b[0])->res;
+      inst0.w2.u64 = sess0->inst.w2.u64;
+      inst0.w3.u64 = (uintptr_t) (b[0]);
+      inst0.w3.u64 |= 0x1ULL;
+      inst0.w7.u64 = sess0->inst.w7.u64;
+
+      sq0 = sa0_index;
 
       if (current_sq0 != sq0)
 	{
@@ -1462,10 +1608,11 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  n_nix_fc_drop++;
 	  goto next;
 	}
-      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0, &pkt_meta[0],
-			      &n_dwords[0]);
 
-      roc_lmt_mov_seg ((void *) lmt_line[0], &pkt_meta[0]->inst, 4);
+      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0, &pkt_meta[0],
+			      &inst0, &n_dwords[0], sess0);
+
+      roc_lmt_mov_seg ((void *) lmt_line[0], &inst0, 4);
 
       lmt_arg = ROC_CN10K_CPT_LMT_ARG | core_lmt_id;
 

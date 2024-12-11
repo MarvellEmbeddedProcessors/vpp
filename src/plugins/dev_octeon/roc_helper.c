@@ -79,7 +79,7 @@ oct_drv_physmem_alloc (vlib_main_t *vm, u32 size, u32 align)
   if (align)
     {
       /* Force ROC align alloc in case alignment is less than ROC align */
-      align = align < ROC_ALIGN ? ROC_ALIGN : align;
+      align = ((align + ROC_ALIGN - 1) & ~(ROC_ALIGN - 1));
       mem = vlib_physmem_alloc_aligned_on_numa (vm, size, align, 0);
     }
   else
@@ -120,6 +120,9 @@ oct_plt_zmalloc (u32 size, u32 align)
 static void *
 oct_plt_realloc (void *addr, u32 size, u32 align)
 {
+  align = CLIB_CACHE_LINE_ROUND (align);
+  size = CLIB_CACHE_LINE_ROUND (size);
+
   if (align)
     return clib_mem_realloc_aligned (addr, size, align);
   else

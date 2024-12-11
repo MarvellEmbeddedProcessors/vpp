@@ -130,7 +130,10 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
   };
 
   if (inl_main->inl_dev)
-    crq->cq.nb_desc = clib_max (crq->cq.nb_desc, 4096);
+    {
+      roc_nix_inl_dev_xaq_realloc (crq->aura_handle);
+      crq->cq.nb_desc = clib_max (crq->cq.nb_desc, 4096);
+    }
 
   if ((rrv = roc_nix_cq_init (nix, &crq->cq)))
     {
