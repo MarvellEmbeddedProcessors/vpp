@@ -128,7 +128,7 @@ jobs:
             apt-get install -y libconfuse-dev libelf-dev libffi7 libmnl-dev libnl-3-dev libnl-route-3-dev
             apt-get install -y libnuma-dev libpcap-dev libssl-dev nasm ninja-build python3-all python3-dev
             apt-get install -y python3-jsonschema pkg-config python3-pip python3-ply python3-setuptools python3-venv
-            apt-get install -y python3-virtualenv tshark lsb-release
+            apt-get install -y python3-virtualenv tshark lsb-release doxygen
             pip3 install --upgrade pip
             pip3 install meson==1.5.2
           run: |
