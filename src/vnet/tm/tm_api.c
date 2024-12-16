@@ -177,6 +177,29 @@ vl_api_tm_sys_shaper_profile_delete_t_handler (
 }
 
 void
+vl_api_tm_sys_node_sched_weight_update_t_handler (
+  vl_api_tm_sys_node_sched_weight_update_t *mp)
+{
+  vl_api_tm_sys_node_sched_weight_update_reply_t *rmp;
+  vnet_main_t *vnm = vnet_get_main ();
+  u32 node_id = 0, weight = 0;
+  int rv = -1;
+
+  vnet_sw_interface_t *sw =
+    vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
+
+  node_id = clib_net_to_host_u32 (mp->node_id);
+  weight = clib_net_to_host_u32 (mp->weight);
+
+  rv = tm_sys_node_sched_weight_update (sw->hw_if_index, node_id, weight);
+
+  REPLY_MACRO2 (VL_API_TM_SYS_NODE_SCHED_WEIGHT_UPDATE_REPLY, ({
+		  if (!rv)
+		    rmp->node_id = clib_host_to_net_u32 (node_id);
+		}));
+}
+
+void
 vl_api_tm_sys_node_read_stats_t_handler (vl_api_tm_sys_node_read_stats_t *mp)
 {
   vl_api_tm_sys_node_read_stats_reply_t *rmp;
