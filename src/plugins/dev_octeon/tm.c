@@ -260,6 +260,40 @@ oct_tm_sys_shaper_profile_delete (u32 hw_if_idx, u32 shaper_id)
 }
 
 int
+oct_tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+  vnet_dev_port_t *port =
+    vnet_dev_get_port_from_dev_instance (hi->dev_instance);
+  vnet_dev_t *dev = port->dev;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_nix *nix = cd->nix;
+  struct roc_nix_tm_node *node;
+  int rc = 0;
+  u32 parent_id, priority;
+
+  node = roc_nix_tm_node_get (nix, node_id);
+  if (!node)
+    {
+      rc = -EINVAL;
+      return oct_roc_err (dev, rc, "roc_nix_tm_node_get node_id not found");
+    }
+
+  parent_id = node->parent_id;
+  priority = node->priority;
+
+  rc =
+    roc_nix_tm_node_parent_update (nix, node_id, parent_id, priority, weight);
+  if (rc)
+    {
+      return oct_roc_err (dev, rc, "roc_nix_tm_node_parent_update failed");
+    }
+
+  return rc;
+}
+
+int
 oct_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_id,
 			    tm_stats_params_t *stats)
 {
@@ -383,6 +417,7 @@ tm_system_t dev_oct_tm_ops = {
   .shaper_profile_create = oct_tm_sys_shaper_profile_create,
   .node_shaper_update = oct_tm_sys_node_shaper_update,
   .shaper_profile_delete = oct_tm_sys_shaper_profile_delete,
+  .node_sched_weight_update = oct_tm_sys_node_sched_weight_update,
   .start_tm = oct_tm_sys_start,
   .stop_tm = oct_tm_sys_stop,
 };
