@@ -359,6 +359,49 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
 }
 
 static int
+api_tm_sys_node_sched_weight_update (vat_main_t *vam)
+{
+  u8 sw_if_idx_set = 0;
+  unformat_input_t *i = vam->input;
+  vl_api_tm_sys_node_sched_weight_update_t *mp;
+  u32 msg_size = sizeof (*mp);
+  u32 node_id = 0, weight = 0;
+  u32 sw_if_idx = 0;
+  int ret;
+
+  vam->result_ready = 0;
+  mp = vl_msg_api_alloc_as_if_client (msg_size);
+
+  while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (i, "sw_if_idx %u", &sw_if_idx))
+	sw_if_idx_set = 1;
+      else if (unformat (i, "node_id %u", &node_id))
+	;
+      else if (unformat (i, "weight %u", &weight))
+	;
+      else
+	{
+	  clib_warning ("Invalid input, unknown parameter");
+	  return -EINVAL;
+	}
+    }
+
+  if (!sw_if_idx_set)
+    return -EINVAL;
+
+  M (TM_SYS_NODE_SCHED_WEIGHT_UPDATE, mp);
+
+  mp->sw_if_idx = clib_host_to_net_u32 (sw_if_idx);
+  mp->node_id = clib_host_to_net_u32 (node_id);
+  mp->weight = clib_host_to_net_u32 (weight);
+
+  S (mp);
+  W (ret);
+  return ret;
+}
+
+static int
 api_tm_sys_node_read_stats (vat_main_t *vam)
 {
   u8 sw_if_idx_set = 0, tm_node_idx_set = 0;
@@ -536,6 +579,15 @@ vl_api_tm_sys_shaper_profile_delete_reply_t_handler (
   vat_main_t *vam = tm_test_main.vat_main;
   clib_warning ("TM shaper profile delete id : %u\n",
 		clib_net_to_host_u32 (mp->shaper_id));
+  vam->result_ready = 1;
+}
+
+static void
+vl_api_tm_sys_node_sched_weight_update_reply_t_handler (
+  vl_api_tm_sys_node_sched_weight_update_reply_t *mp)
+{
+  vat_main_t *vam = tm_test_main.vat_main;
+  clib_warning ("TM node sched weight updated\n");
   vam->result_ready = 1;
 }
 

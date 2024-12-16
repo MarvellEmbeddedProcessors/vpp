@@ -122,6 +122,20 @@ tm_sys_shaper_profile_delete (u32 hw_if_idx, u32 shaper_id)
 }
 
 int
+tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+  vnet_device_class_t *dev_class =
+    vnet_get_device_class (vnm, hi->dev_class_index);
+
+  dev_class->tm_sys_impl->node_sched_weight_update (hw_if_idx, node_id,
+						    weight);
+
+  return 0;
+}
+
+int
 tm_sys_node_read_stats (u32 hw_if_idx, u32 node_idx, tm_stats_params_t *param)
 {
   vnet_main_t *vnm = vnet_get_main ();

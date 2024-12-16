@@ -167,6 +167,7 @@ typedef struct tm_system_t_
   int (*shaper_profile_delete) (u32 hw_if_idx, u32 shaper_id);
   int (*node_shaper_update) (u32 hw_if_idx, u32 node_id,
 			     u32 shaper_profile_id);
+  int (*node_sched_weight_update) (u32 hw_if_idx, u32 node_id, u32 weight);
   int (*node_read_stats) (u32 hw_if_idx, u32 node_idx,
 			  tm_stats_params_t *param);
   int (*start_tm) (u32 hw_if_idx);
@@ -256,6 +257,17 @@ int tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id,
  * @return 0 on success.
  */
 int tm_sys_shaper_profile_delete (u32 hw_if_idx, u32 shaper_id);
+
+/**
+ * @brief Update the scheduling weight of a TM node.
+ *
+ * @param hw_if_idx - Hardware interface index.
+ * @param node_id - Identifier of the TM node to be updated.
+ * @param weight - New scheduling weight to be assigned to the node.
+ *
+ * @return 0 on success.
+ */
+int tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight);
 
 /**
  * @brief Read statistics for a specific traffic management node.
