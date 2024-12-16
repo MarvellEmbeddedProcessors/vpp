@@ -81,7 +81,9 @@ jobs:
           shell: /bin/bash
           install: |
             apt-get update -q -y
-            apt-get install -y apt-utils sudo make dialog ccache git build-essential
+            apt-get install -y apt-utils gcc meson sudo make dialog ccache git build-essential software-properties-common
+            add-apt-repository -y ppa:ubuntu-toolchain-r/test
+            apt-get update -q -y
             apt-get install -y  aspell aspell-en autopoint autotools-dev binfmt-support binutils binutils-aarch64-linux-gnu
             apt-get install -y  binutils-common bsdextrautils bzip2 ca-certificates clang-14 cmake-data cpp cpp-11 cpp-12 dbus
             apt-get install -y  dctrl-tools debugedit dh-autoreconf dh-elpa-helper dh-strip-nondeterminism dictionaries-common dirmngr
@@ -122,15 +124,16 @@ jobs:
             apt-get install -y  python3-pyrsistent python3-requests python3-setuptools-whl python3-six python3-soupsieve python3-tz
             apt-get install -y  python3-urllib3 python3-webencodings python3-wheel python3-wheel-whl python3-zipp python3.10
             apt-get install -y  python3.10-dev python3.10-minimal python3.10-venv readline-common rpcsvc-proto shared-mime-info tzdata
-            apt-get install -y  ucf uuid-dev wireshark-common xauth xdg-user-dirs xz-utils zlib1g-dev
-            apt-get install -y check chrpath clang clang-format-11 cmake cscope debhelper dh-python dkms
-            apt-get install -y ethtool exuberant-ctags gcovr git-review iperf iperf3 lcov libapr1-dev
-            apt-get install -y libconfuse-dev libelf-dev libffi7 libmnl-dev libnl-3-dev libnl-route-3-dev
-            apt-get install -y libnuma-dev libpcap-dev libssl-dev nasm ninja-build python3-all python3-dev
+            apt-get install -y  ucf uuid-dev wireshark-common xauth xdg-user-dirs xz-utils zlib1g-dev libgmpxx4ldbl
+            apt-get install -y check chrpath clang clang-format-11 cmake cscope debhelper dh-python dkms liblz4-dev
+            apt-get install -y ethtool exuberant-ctags gcovr git-review iperf iperf3 lcov libapr1-dev liblzma-dev wget
+            apt-get install -y libconfuse-dev libelf-dev libffi7 libmnl-dev libnl-3-dev libnl-route-3-dev libzstd-dev
+            apt-get install -y libnuma-dev libpcap-dev libssl-dev nasm ninja-build python3-all python3-dev nettle-dev
             apt-get install -y python3-jsonschema pkg-config python3-pip python3-ply python3-setuptools python3-venv
-            apt-get install -y python3-virtualenv tshark lsb-release doxygen
-            pip3 install --upgrade pip
-            pip3 install meson==1.5.2
+            apt-get install -y python3-virtualenv tshark lsb-release doxygen libarchive-dev libbsd-dev libbpf-dev
+            apt-get install -y libnl-xfrm-3-dev sphinx-common python3-sphinx-rtd-theme libfdt-dev libjansson-dev
+            apt-get install -y python3-pyelftools gcc-13 bzip2-doc libacl1-dev libattr1-dev libbz2-dev libgmp-dev
+            pip3 install meson --upgrade
           run: |
             source /artifacts/env
             DISTRO=ubuntu-`lsb_release -rs`
