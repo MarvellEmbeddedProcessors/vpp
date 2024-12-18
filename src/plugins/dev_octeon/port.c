@@ -303,6 +303,13 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
       return rv;
     }
 
+  if (roc_nix_register_queue_irqs (nix))
+    {
+      rv = oct_roc_err (dev, rrv, "roc_nix_register_queue_irqs() failed");
+      oct_port_deinit (vm, port);
+      return rv;
+    }
+  cp->q_intr_enabled = 1;
   oct_port_add_counters (vm, port);
 
   oct_init_tm_args (&tm_system_ops);
@@ -339,6 +346,13 @@ oct_port_deinit (vlib_main_t *vm, vnet_dev_port_t *port)
     {
       roc_nix_tm_fini (nix);
       cp->tm_initialized = 0;
+    }
+
+  /* Unregister queue irqs */
+  if (cp->q_intr_enabled)
+    {
+      roc_nix_unregister_queue_irqs (nix);
+      cp->q_intr_enabled = 0;
     }
 
   if (cp->lf_allocated)

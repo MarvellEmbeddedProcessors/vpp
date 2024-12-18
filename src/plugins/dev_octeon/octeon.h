@@ -55,7 +55,6 @@ typedef enum
   OCT_DEVICE_TYPE_RVU_INL_VF,
 } __clib_packed oct_device_type_t;
 
-
 typedef struct
 {
   /* vnet flow index */
@@ -71,6 +70,7 @@ typedef struct
   u8 lf_allocated : 1;
   u8 tm_initialized : 1;
   u8 npc_initialized : 1;
+  u8 q_intr_enabled : 1;
   struct roc_npc npc;
   oct_flow_entry_t *flow_entries;
 } oct_port_t;
@@ -144,6 +144,7 @@ typedef struct
   u32 speed;
   struct plt_pci_device plt_pci_dev;
   struct roc_nix *nix;
+  oct_msix_handler_info_t *msix_handler;
 
   u32 cached_cpt_pkts;
   u64 cpt_io_addr;
