@@ -36,17 +36,6 @@ typedef enum
 
 typedef struct
 {
-  oct_device_type_t type;
-  u8 nix_initialized : 1;
-  u8 status : 1;
-  u8 full_duplex : 1;
-  u32 speed;
-  struct plt_pci_device plt_pci_dev;
-  struct roc_nix *nix;
-} oct_device_t;
-
-typedef struct
-{
   /* vnet flow index */
   u32 vnet_flow_index;
 
@@ -60,6 +49,7 @@ typedef struct
   u8 lf_allocated : 1;
   u8 tm_initialized : 1;
   u8 npc_initialized : 1;
+  u8 q_intr_enabled : 1;
   struct roc_npc npc;
   oct_flow_entry_t *flow_entries;
 } oct_port_t;
@@ -108,6 +98,30 @@ typedef struct
   CLIB_CACHE_LINE_ALIGN_MARK (data0);
   struct roc_nix_sq sq;
 } oct_txq_t;
+
+typedef struct
+{
+  oct_device_type_t type;
+  u8 nix_initialized : 1;
+  u8 status : 1;
+  u8 full_duplex : 1;
+  u32 speed;
+  struct plt_pci_device plt_pci_dev;
+  struct roc_nix *nix;
+  oct_msix_handler_info_t *msix_handler;
+} oct_device_t;
+
+typedef struct
+{
+  oct_device_t **oct_dev;
+  u8 inl_dev_initialized : 1;
+  u8 use_single_rx_tx_aura : 1;
+  u64 aura_handle;
+  u64 tx_aura_handle;
+
+} oct_main_t;
+
+extern oct_main_t oct_main;
 
 /* format.c */
 format_function_t format_oct_port_status;
