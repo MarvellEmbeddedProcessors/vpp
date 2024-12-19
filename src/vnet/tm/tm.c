@@ -151,6 +151,36 @@ tm_sys_node_read_stats (u32 hw_if_idx, u32 node_idx, tm_stats_params_t *param)
 }
 
 int
+tm_sys_get_capabilities (u32 hw_if_idx, tm_capa_params_t *param)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+
+  vnet_device_class_t *dev_class =
+    vnet_get_device_class (vnm, hi->dev_class_index);
+
+  dev_class->tm_sys_impl->tm_get_capabilities (hw_if_idx, param);
+
+  return 0;
+}
+
+int
+tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *param,
+			       u32 lvl)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+
+  vnet_device_class_t *dev_class =
+    vnet_get_device_class (vnm, hi->dev_class_index);
+
+  dev_class->tm_sys_impl->tm_level_get_capabilities (hw_if_idx, param, lvl);
+
+  return 0;
+}
+int
 tm_sys_start_tm (u32 hw_if_idx)
 {
   vnet_main_t *vnm = vnet_get_main ();

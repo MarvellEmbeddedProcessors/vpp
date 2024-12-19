@@ -220,6 +220,40 @@ vl_api_tm_sys_node_read_stats_t_handler (vl_api_tm_sys_node_read_stats_t *mp)
 }
 
 void
+vl_api_tm_sys_get_capabilities_t_handler (vl_api_tm_sys_get_capabilities_t *mp)
+{
+  vl_api_tm_sys_get_capabilities_reply_t *rmp;
+  vnet_main_t *vnm = vnet_get_main ();
+  tm_capa_params_t s_p = { 0 };
+  int rv = -1;
+
+  vnet_sw_interface_t *sw =
+    vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
+
+  rv = tm_sys_get_capabilities (sw->hw_if_index, &s_p);
+
+  REPLY_MACRO (VL_API_TM_SYS_GET_CAPABILITIES_REPLY);
+}
+
+void
+vl_api_tm_sys_level_get_capabilities_t_handler (
+  vl_api_tm_sys_level_get_capabilities_t *mp)
+{
+  vl_api_tm_sys_level_get_capabilities_reply_t *rmp;
+  vnet_main_t *vnm = vnet_get_main ();
+  tm_level_capa_params_t s_p = { 0 };
+  int rv = -1;
+  u32 lvl = 0;
+
+  vnet_sw_interface_t *sw =
+    vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
+
+  rv = tm_sys_level_get_capabilities (sw->hw_if_index, &s_p, lvl);
+
+  REPLY_MACRO (VL_API_TM_SYS_LEVEL_GET_CAPABILITIES_REPLY);
+}
+
+void
 vl_api_tm_sys_start_tm_t_handler (vl_api_tm_sys_start_tm_t *mp)
 {
   vl_api_tm_sys_start_tm_reply_t *rmp;

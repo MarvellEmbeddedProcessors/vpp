@@ -297,6 +297,68 @@ define tm_sys_node_sched_weight_update
 };
 
 /**
+ * @brief Reply for getting the capabilities of a TM system.
+ *
+ * This structure specifies the parameters returned in response to getting the capabilities of a TM system.
+ *
+ * @param context - Sender context, to match reply with request.
+ * @param retval - Return value indicating success or failure of the operation.
+ */
+define tm_sys_get_capabilities_reply
+{
+  u32 context;
+  i32 retval;
+};
+
+/**
+ * @brief Get the capabilities of a TM system.
+ *
+ * This structure outlines the necessary parameters to get the capabilities of a TM system.
+ *
+ * @param client_index - Opaque cookie to identify the sender.
+ * @param context - Sender context, to match reply with request.
+ * @param sw_if_idx - Software interface index.
+ */
+define tm_sys_get_capabilities
+ {
+   u32 client_index;
+   u32 context;
+   u32 sw_if_idx;
+ };
+
+/**
+ * @brief Reply for getting the capabilities of a specific level in a TM system.
+ *
+ * This structure specifies the parameters returned in response to getting the capabilities of a specific level in a TM system.
+ *
+ * @param context - Sender context, to match reply with request.
+ * @param retval - Return value indicating success or failure of the operation.
+ */
+define tm_sys_level_get_capabilities_reply
+{
+  u32 context;
+  i32 retval;
+};
+
+/**
+ * @brief Get the capabilities of a specific level in a TM system.
+ *
+ * This structure outlines the necessary parameters to get the capabilities of a specific level in a TM system.
+ *
+ * @param client_index - Opaque cookie to identify the sender.
+ * @param context - Sender context, to match reply with request.
+ * @param sw_if_idx - Software interface index.
+ * @param level - Level in the TM system whose capabilities are to be read.
+ */
+define tm_sys_level_get_capabilities
+ {
+   u32 client_index;
+   u32 context;
+   u32 sw_if_idx;
+   u32 level;
+ };
+
+/**
  * @brief Reply for reading the statistics of a TM node.
  *
  * This structure specifies the parameters returned in response to reading the statistics of a TM node.
