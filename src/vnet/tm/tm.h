@@ -119,6 +119,372 @@ typedef enum tm_node_stats_type_t
 } tm_node_stats_type_t;
 
 /**
+ * Node Capabilities Params
+ */
+typedef struct tm_capa_params_
+{
+  /** Maximum number of nodes. */
+  uint32_t n_nodes_max;
+
+  /** Maximum number of levels (i.e. number of nodes connecting the root
+   * node with any leaf node, including the root and the leaf).
+   */
+  uint32_t n_levels_max;
+
+  /** When non-zero, this flag indicates that all the non-leaf nodes
+   * (with the exception of the root node) have identical capability set.
+   */
+  int non_leaf_nodes_identical;
+
+  /** When non-zero, this flag indicates that all the leaf nodes have
+   * identical capability set.
+   */
+  int leaf_nodes_identical;
+
+  /** Maximum number of shapers, either private or shared. In case the
+   * implementation does not share any resources between private and
+   * shared shapers, it is typically equal to the sum of
+   * *shaper_private_n_max* and *shaper_shared_n_max*. The
+   * value of zero indicates that traffic shaping is not supported.
+   */
+  uint32_t shaper_n_max;
+  /** Maximum number of private shapers. Indicates the maximum number of
+   * nodes that can concurrently have their private shaper enabled. The
+   * value of zero indicates that private shapers are not supported.
+   */
+  uint32_t shaper_private_n_max;
+
+  /** Maximum number of private shapers that support dual rate shaping.
+   * Indicates the maximum number of nodes that can concurrently have
+   * their private shaper enabled with dual rate support. Only valid when
+   * private shapers are supported. The value of zero indicates that dual
+   * rate shaping is not available for private shapers. The maximum value
+   * is *shaper_private_n_max*.
+   */
+  int shaper_private_dual_rate_n_max;
+
+  /** Minimum committed/peak rate (bytes per second) for any private
+   * shaper. Valid only when private shapers are supported.
+   */
+  uint64_t shaper_private_rate_min;
+  /** Maximum committed/peak rate (bytes per second) for any private
+   * shaper. Valid only when private shapers are supported.
+   */
+  uint64_t shaper_private_rate_max;
+
+  /** Shaper private packet mode supported. When non-zero, this parameter
+   * indicates that there is at least one node that can be configured
+   * with packet mode in its private shaper. When shaper is configured
+   * in packet mode, committed/peak rate provided is interpreted
+   * in packets per second.
+   */
+  int shaper_private_packet_mode_supported;
+
+  /** Shaper private byte mode supported. When non-zero, this parameter
+   * indicates that there is at least one node that can be configured
+   * with byte mode in its private shaper. When shaper is configured
+   * in byte mode, committed/peak rate provided is interpreted in
+   * bytes per second.
+   */
+  int shaper_private_byte_mode_supported;
+  /** Minimum value allowed for packet length adjustment for any private
+   * or shared shaper.
+   */
+  int shaper_pkt_length_adjust_min;
+
+  /** Maximum value allowed for packet length adjustment for any private
+   * or shared shaper.
+   */
+  int shaper_pkt_length_adjust_max;
+
+  /** Maximum number of children nodes. This parameter indicates that
+   * there is at least one non-leaf node that can be configured with this
+   * many children nodes, which might not be true for all the non-leaf
+   * nodes.
+   */
+  uint32_t sched_n_children_max;
+
+  /** Maximum number of supported priority levels. This parameter
+   * indicates that there is at least one non-leaf node that can be
+   * configured with this many priority levels for managing its children
+   * nodes, which might not be true for all the non-leaf nodes. The value
+   * of zero is invalid. The value of 1 indicates that only priority 0 is
+   * supported, which essentially means that Strict Priority (SP)
+   * algorithm is not supported.
+   */
+  uint32_t sched_sp_n_priorities_max;
+  /** Maximum number of sibling nodes that can have the same priority at
+   * any given time, i.e. maximum size of the WFQ sibling node group. This
+   * parameter indicates there is at least one non-leaf node that meets
+   * this condition, which might not be true for all the non-leaf nodes.
+   * The value of zero is invalid. The value of 1 indicates that WFQ
+   * algorithm is not supported. The maximum value is
+   * *sched_n_children_max*.
+   */
+  uint32_t sched_wfq_n_children_per_group_max;
+
+  /** Maximum number of priority levels that can have more than one child
+   * node at any given time, i.e. maximum number of WFQ sibling node
+   * groups that have two or more members. This parameter indicates there
+   * is at least one non-leaf node that meets this condition, which might
+   * not be true for all the non-leaf nodes. The value of zero states that
+   * WFQ algorithm is not supported. The value of 1 indicates that
+   * (*sched_sp_n_priorities_max* - 1) priority levels have at most one
+   * child node, so there can be only one priority level with two or
+   * more sibling nodes making up a WFQ group. The maximum value is:
+   * min(floor(*sched_n_children_max* / 2), *sched_sp_n_priorities_max*).
+   */
+  uint32_t sched_wfq_n_groups_max;
+
+  /** Maximum WFQ weight. The value of 1 indicates that all sibling nodes
+   * with same priority have the same WFQ weight, so WFQ is reduced to FQ.
+   */
+  uint32_t sched_wfq_weight_max;
+
+  /** WFQ packet mode supported. When non-zero, this parameter indicates
+   * that there is at least one non-leaf node that supports packet mode
+   * for WFQ among its children. WFQ weights will be applied against
+   * packet count for scheduling children when a non-leaf node
+   * is configured appropriately.
+   */
+  int sched_wfq_packet_mode_supported;
+
+  /** WFQ byte mode supported. When non-zero, this parameter indicates
+   * that there is at least one non-leaf node that supports byte mode
+   * for WFQ among its children. WFQ weights will be applied against
+   * bytes for scheduling children when a non-leaf node is configured
+   * appropriately.
+   */
+  int sched_wfq_byte_mode_supported;
+
+} tm_capa_params_t;
+
+/**
+ * Traffic manager level capabilities
+ */
+typedef struct tm_level_capa_params_
+{
+  /** Maximum number of nodes for the current hierarchy level. */
+  uint32_t n_nodes_max;
+
+  /** Maximum number of non-leaf nodes for the current hierarchy level.
+   * The value of 0 indicates that current level only supports leaf
+   * nodes. The maximum value is *n_nodes_max*.
+   */
+  uint32_t n_nodes_nonleaf_max;
+
+  /** Maximum number of leaf nodes for the current hierarchy level. The
+   * value of 0 indicates that current level only supports non-leaf
+   * nodes. The maximum value is *n_nodes_max*.
+   */
+  uint32_t n_nodes_leaf_max;
+
+  /** When non-zero, this flag indicates that all the non-leaf nodes on
+   * this level have identical capability set. Valid only when
+   * *n_nodes_nonleaf_max* is non-zero.
+   */
+  int non_leaf_nodes_identical;
+
+  /** When non-zero, this flag indicates that all the leaf nodes on this
+   * level have identical capability set. Valid only when
+   * *n_nodes_leaf_max* is non-zero.
+   */
+  int leaf_nodes_identical;
+  union
+  {
+    /** Items valid only for the non-leaf nodes on this level. */
+    struct
+    {
+      /** Private shaper support. When non-zero, it indicates
+       * there is at least one non-leaf node on this level
+       * with private shaper support, which may not be the
+       * case for all the non-leaf nodes on this level.
+       */
+      int shaper_private_supported;
+
+      /** Dual rate support for private shaper. Valid only
+       * when private shaper is supported for the non-leaf
+       * nodes on the current level. When non-zero, it
+       * indicates there is at least one non-leaf node on this
+       * level with dual rate private shaper support, which
+       * may not be the case for all the non-leaf nodes on
+       * this level.
+       */
+      int shaper_private_dual_rate_supported;
+
+      /** Minimum committed/peak rate (bytes per second) for
+       * private shapers of the non-leaf nodes of this level.
+       * Valid only when private shaper is supported on this
+       * level.
+       */
+      uint64_t shaper_private_rate_min;
+
+      /** Maximum committed/peak rate (bytes per second) for
+       * private shapers of the non-leaf nodes on this level.
+       * Valid only when private shaper is supported on this
+       * level.
+       */
+      uint64_t shaper_private_rate_max;
+
+      /** Shaper private packet mode supported. When non-zero,
+       * this parameter indicates there is at least one
+       * non-leaf node at this level that can be configured
+       * with packet mode in its private shaper. When private
+       * shaper is configured in packet mode, committed/peak
+       * rate provided is interpreted in packets per second.
+       */
+      int shaper_private_packet_mode_supported;
+
+      /** Shaper private byte mode supported. When non-zero,
+       * this parameter indicates there is at least one
+       * non-leaf node at this level that can be configured
+       * with byte mode in its private shaper. When private
+       * shaper is configured in byte mode, committed/peak
+       * rate provided is interpreted in bytes per second.
+       */
+      int shaper_private_byte_mode_supported;
+
+      /** Maximum number of children nodes. This parameter
+       * indicates that there is at least one non-leaf node on
+       * this level that can be configured with this many
+       * children nodes, which might not be true for all the
+       * non-leaf nodes on this level.
+       */
+      uint32_t sched_n_children_max;
+      /** Maximum number of supported priority levels. This
+       * parameter indicates that there is at least one
+       * non-leaf node on this level that can be configured
+       * with this many priority levels for managing its
+       * children nodes, which might not be true for all the
+       * non-leaf nodes on this level. The value of zero is
+       * invalid. The value of 1 indicates that only priority
+       * 0 is supported, which essentially means that Strict
+       * Priority (SP) algorithm is not supported on this
+       * level.
+       */
+      uint32_t sched_sp_n_priorities_max;
+
+      /** Maximum number of sibling nodes that can have the
+       * same priority at any given time, i.e. maximum size of
+       * the WFQ sibling node group. This parameter indicates
+       * there is at least one non-leaf node on this level
+       * that meets this condition, which may not be true for
+       * all the non-leaf nodes on this level. The value of
+       * zero is invalid. The value of 1 indicates that WFQ
+       * algorithm is not supported on this level. The maximum
+       * value is *sched_n_children_max*.
+       */
+      uint32_t sched_wfq_n_children_per_group_max;
+
+      /** Maximum number of priority levels that can have
+       * more than one child node at any given time, i.e.
+       * maximum number of WFQ sibling node groups that
+       * have two or more members. This parameter indicates
+       * there is at least one non-leaf node on this level
+       * that meets this condition, which might not be true
+       * for all the non-leaf nodes. The value of zero states
+       * that WFQ algorithm is not supported on this level.
+       * The value of 1 indicates that
+       * (*sched_sp_n_priorities_max* - 1) priority levels on
+       * this level have at most one child node, so there can
+       * be only one priority level with two or more sibling
+       * nodes making up a WFQ group on this level. The
+       * maximum value is:
+       * min(floor(*sched_n_children_max* / 2),
+       * *sched_sp_n_priorities_max*).
+       */
+      uint32_t sched_wfq_n_groups_max;
+      /** Maximum WFQ weight. The value of 1 indicates that
+       * all sibling nodes on this level with same priority
+       * have the same WFQ weight, so on this level WFQ is
+       * reduced to FQ.
+       */
+      uint32_t sched_wfq_weight_max;
+
+      /** WFQ packet mode supported. When non-zero, this
+       * parameter indicates that there is at least one
+       * non-leaf node at this level that supports packet
+       * mode for WFQ among its children. WFQ weights will
+       * be applied against packet count for scheduling
+       * children when a non-leaf node is configured
+       * appropriately.
+       */
+      int sched_wfq_packet_mode_supported;
+
+      /** WFQ byte mode supported. When non-zero, this
+       * parameter indicates that there is at least one
+       * non-leaf node at this level that supports byte
+       * mode for WFQ among its children. WFQ weights will
+       * be applied against bytes for scheduling children
+       * when a non-leaf node is configured appropriately.
+       */
+      int sched_wfq_byte_mode_supported;
+
+      /** Mask of statistics counter types supported by the
+       * non-leaf nodes on this level. Every supported
+       * statistics counter type is supported by at least one
+       * non-leaf node on this level, which may not be true
+       * for all the non-leaf nodes on this level.
+       * @see enum rte_tm_stats_type
+       */
+      uint64_t stats_mask;
+    } nonleaf;
+
+    /** Items valid only for the leaf nodes on this level. */
+    struct
+    {
+      /** Private shaper support. When non-zero, it indicates
+       * there is at least one leaf node on this level with
+       * private shaper support, which may not be the case for
+       * all the leaf nodes on this level.
+       */
+      int shaper_private_supported;
+
+      /** Dual rate support for private shaper. Valid only
+       * when private shaper is supported for the leaf nodes
+       * on this level. When non-zero, it indicates there is
+       * at least one leaf node on this level with dual rate
+       * private shaper support, which may not be the case for
+       * all the leaf nodes on this level.
+       */
+      int shaper_private_dual_rate_supported;
+
+      /** Minimum committed/peak rate (bytes per second) for
+       * private shapers of the leaf nodes of this level.
+       * Valid only when private shaper is supported for the
+       * leaf nodes on this level.
+       */
+      uint64_t shaper_private_rate_min;
+
+      /** Maximum committed/peak rate (bytes per second) for
+       * private shapers of the leaf nodes on this level.
+       * Valid only when private shaper is supported for the
+       * leaf nodes on this level.
+       */
+      uint64_t shaper_private_rate_max;
+
+      /** Shaper private packet mode supported. When non-zero,
+       * this parameter indicates there is at least one leaf
+       * node at this level that can be configured with
+       * packet mode in its private shaper. When private
+       * shaper is configured in packet mode, committed/peak
+       * rate provided is interpreted in packets per second.
+       */
+      int shaper_private_packet_mode_supported;
+      /** Shaper private byte mode supported. When non-zero,
+       * this parameter indicates there is at least one leaf
+       * node at this level that can be configured with
+       * byte mode in its private shaper. When private shaper
+       * is configured in byte mode, committed/peak rate
+       * provided is interpreted in bytes per second.
+       */
+      int shaper_private_byte_mode_supported;
+
+    } leaf;
+  };
+} tm_level_capa_params_t;
+
+/**
  * Node statistics counters
  */
 typedef struct tm_stats_params_
@@ -170,6 +536,9 @@ typedef struct tm_system_t_
   int (*node_sched_weight_update) (u32 hw_if_idx, u32 node_id, u32 weight);
   int (*node_read_stats) (u32 hw_if_idx, u32 node_idx,
 			  tm_stats_params_t *param);
+  int (*tm_get_capabilities) (u32 hw_if_idx, tm_capa_params_t *capa_param);
+  int (*tm_level_get_capabilities) (u32 hw_if_idx, tm_level_capa_params_t *cap,
+				    u32 lvl);
   int (*start_tm) (u32 hw_if_idx);
   int (*stop_tm) (u32 hw_if_idx);
 } tm_system_t;
@@ -280,6 +649,16 @@ int tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight);
  */
 int tm_sys_node_read_stats (u32 hw_if_idx, u32 node_idx,
 			    tm_stats_params_t *param);
+/**
+ * @brief Read Capabilities for a specific traffic management system.
+ */
+int tm_sys_get_capabilities (u32 hw_if_idx, tm_capa_params_t *capa_param);
+
+/**
+ * @brief Read level Capabilities for a specific traffic management system.
+ */
+int tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *cap,
+				   u32 lvl);
 
 /**
  * @brief Start the traffic management system.
