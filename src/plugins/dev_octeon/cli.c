@@ -368,3 +368,73 @@ VLIB_CLI_COMMAND (oct_aura_available_command, static) = {
   .short_help = "show octeon aura available",
   .function = oct_aura_available_command_fn,
 };
+
+static inline int
+oct_dev_is_nix (oct_device_t *cd)
+{
+  return cd->type == OCT_DEVICE_TYPE_RVU_PF ||
+	 cd->type == OCT_DEVICE_TYPE_RVU_VF ||
+	 cd->type == OCT_DEVICE_TYPE_SDP_VF ||
+	 cd->type == OCT_DEVICE_TYPE_LBK_VF;
+}
+
+static void
+oct_tm_tree_dump (vnet_dev_t *dev)
+{
+  oct_device_t *cd = vnet_dev_get_data (dev);
+
+  if (!oct_dev_is_nix (cd) || !cd->nix)
+    return;
+
+  roc_nix_tm_dump (cd->nix, NULL);
+}
+
+static clib_error_t *
+oct_tm_tree_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			vlib_cli_command_t *cmd)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_dev_main_t *dm = &vnet_dev_main;
+  u32 sw_if_index = ~0;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "%U", unformat_vnet_sw_interface, vnm,
+		    &sw_if_index))
+	;
+      else
+	return clib_error_return (0, "unknown input `%U'",
+				  format_unformat_error, input);
+    }
+
+  if (sw_if_index != ~0)
+    {
+      vnet_dev_port_t *port = vnet_dev_get_port_from_sw_if_index (sw_if_index);
+
+      if (!port || !oct_dev_is_nix (vnet_dev_get_data (port->dev)))
+	return clib_error_return (0,
+				  "interface is not an OCTEON NIX interface");
+
+      oct_tm_tree_dump (port->dev);
+      return 0;
+    }
+
+  pool_foreach_pointer (dev, dm->devices)
+    oct_tm_tree_dump (dev);
+
+  return 0;
+}
+
+/*?
+ * Display the OCTEON NIX traffic management (TM) tree. With an interface,
+ * only that interface is dumped; otherwise all OCTEON interfaces are dumped.
+ *
+ * @cliexpar
+ * @cliexstart{show octeon interface tm}
+ * @cliexend
+?*/
+VLIB_CLI_COMMAND (oct_tm_tree_command, static) = {
+  .path = "show octeon interface tm",
+  .short_help = "show octeon interface tm [<interface>]",
+  .function = oct_tm_tree_command_fn,
+};
