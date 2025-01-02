@@ -369,14 +369,14 @@ oct_is_packet_from_cpt (union nix_rx_parse_u *rxp)
 }
 
 static_always_inline uword
-oct_ipsec_is_inl_op_success (struct cpt_parse_hdr_s *cpt_hdr)
+oct_ipsec_is_inl_op_success (struct cpt_cn10k_parse_hdr_s *cpt_hdr)
 {
   return (((1U << cpt_hdr->w3.hw_ccode) & CPT_COMP_HWGOOD_MASK) &&
 	  roc_ie_ot_ucc_is_success (cpt_hdr->w3.uc_ccode));
 }
 
 static_always_inline u32
-oct_get_len_from_meta (struct cpt_parse_hdr_s *cpt_hdr, u64 w0, u64 w4)
+oct_get_len_from_meta (struct cpt_cn10k_parse_hdr_s *cpt_hdr, u64 w0, u64 w4)
 {
   u32 len;
   uintptr_t ip;
@@ -413,14 +413,14 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 			       oct_nix_rx_cqe_desc_t *d, vlib_buffer_t **b,
 			       oct_rx_node_ctx_t *ctx,
 			       vlib_buffer_template_t *bt,
-			       struct cpt_parse_hdr_s *cpt_hdr,
+			       struct cpt_cn10k_parse_hdr_s *cpt_hdr,
 			       vlib_buffer_t **buffs, u32 *err_flags)
 {
   union nix_rx_parse_u *orig_rxp;
   u32 is_fail, olen, esp_sz, l2_ol3_sz, idx;
   u64 *wqe_ptr;
 
-  cpt_hdr = (struct cpt_parse_hdr_s *) *(((u64 *) d) + 9);
+  cpt_hdr = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) d) + 9);
   wqe_ptr = (u64 *) clib_net_to_host_u64 (cpt_hdr->wqe_ptr);
 
   b[0] = (vlib_buffer_t *) wqe_ptr;
@@ -516,8 +516,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 b2_err_flags = 0, b3_err_flags = 0;
   u32 n_left, err_flags = 0;
   oct_nix_rx_cqe_desc_t *d = ctx->next_desc;
-  struct cpt_parse_hdr_s *cpt_hdr0, *cpt_hdr1;
-  struct cpt_parse_hdr_s *cpt_hdr2, *cpt_hdr3;
+  struct cpt_cn10k_parse_hdr_s *cpt_hdr0, *cpt_hdr1;
+  struct cpt_cn10k_parse_hdr_s *cpt_hdr2, *cpt_hdr3;
   union nix_rx_parse_u *orig_rxp0, *orig_rxp1;
   union nix_rx_parse_u *orig_rxp2, *orig_rxp3;
   u8 is_b0_from_cpt, is_b1_from_cpt;
@@ -616,10 +616,10 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       else if (n_from_cpt == 4)
 	{
 	  /* All packets are from cpt */
-	  cpt_hdr0 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
-	  cpt_hdr1 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
-	  cpt_hdr2 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
-	  cpt_hdr3 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
+	  cpt_hdr0 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
+	  cpt_hdr1 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
+	  cpt_hdr2 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
+	  cpt_hdr3 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
 
 	  wqe_ptr0 = (u64 *) clib_net_to_host_u64 (cpt_hdr0->wqe_ptr);
 	  wqe_ptr1 = (u64 *) clib_net_to_host_u64 (cpt_hdr1->wqe_ptr);
@@ -790,7 +790,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  /* CQ ring contains mix of packets from wire and CPT */
 	  if (is_b0_from_cpt)
 	    {
-	      cpt_hdr0 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
+	      cpt_hdr0 =
+		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
 					     cpt_hdr0, buffs, &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
@@ -801,7 +802,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 
 	  if (is_b1_from_cpt)
 	    {
-	      cpt_hdr1 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
+	      cpt_hdr1 =
+		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[1], &b[1], ctx, &bt,
 					     cpt_hdr1, buffs, &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
@@ -811,7 +813,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				 buffs, &err_flags);
 	  if (is_b2_from_cpt)
 	    {
-	      cpt_hdr2 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
+	      cpt_hdr2 =
+		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[2], &b[2], ctx, &bt,
 					     cpt_hdr2, buffs, &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr2, laddr, &loff);
@@ -821,7 +824,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				 buffs, &err_flags);
 	  if (is_b3_from_cpt)
 	    {
-	      cpt_hdr3 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
+	      cpt_hdr3 =
+		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[3], &b[3], ctx, &bt,
 					     cpt_hdr3, buffs, &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr3, laddr, &loff);
@@ -900,7 +904,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       is_b0_from_cpt = oct_is_packet_from_cpt (&d[0].parse.f);
       if (is_b0_from_cpt)
 	{
-	  cpt_hdr0 = (struct cpt_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
+	  cpt_hdr0 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
 	  oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
 					 cpt_hdr0, buffs, &err_flags);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);

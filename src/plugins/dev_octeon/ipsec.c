@@ -70,7 +70,7 @@ oct_ipsec_crypto_inst_w7_get (void *sa)
   union cpt_inst_w7 w7;
 
   w7.u64 = 0;
-  w7.s.egrp = ROC_CPT_DFLT_ENG_GRP_SE_IE;
+  w7.s.egrp = ROC_LEGACY_CPT_DFLT_ENG_GRP_SE_IE;
   w7.s.ctx_val = 1;
 
   return w7.u64;
@@ -960,7 +960,6 @@ oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
   inl_dev_main->inl_dev->ipsec_in_max_spi = inl_dev_main->in_max_spi;
   inl_dev_main->inl_dev->wqe_skip = 0;
   inl_dev_main->inl_dev->nb_meta_bufs = bp->n_buffers;
-  inl_dev_main->inl_dev->attach_cptlf = true;
 
   if ((rrv = roc_nix_inl_dev_init (inl_dev_main->inl_dev)) < 0)
     {
