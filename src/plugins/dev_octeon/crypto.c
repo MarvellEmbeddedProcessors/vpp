@@ -1435,6 +1435,7 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
   u32 crypto_total_length;
   oct_crypto_key_t *key;
   vlib_buffer_t *buffer;
+  void *sg_data;
   u16 adj_len;
 
   /* GCM packets having 8 bytes of aad and 8 bytes of iv */
@@ -1449,6 +1450,8 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 	frame, VNET_CRYPTO_OP_STATUS_FAIL_ENGINE_ERR);
       return -1;
     }
+
+  sg_data = pend_q->sg_data;
 
   for (i = 0; i < frame->n_elts; i++)
     {
@@ -1494,7 +1497,7 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 
 	  oct_crypto_fill_fc_params (
 	    sess, inst + i, is_aead, aad_len, (u8 *) dptr_start_ptr, elts,
-	    (oct_crypto_scatter_gather_t *) (infl_req->sg_data),
+	    ((oct_crypto_scatter_gather_t *) (sg_data)) + enq_tail,
 	    crypto_total_length /* cipher_len */,
 	    crypto_start_offset /* cipher_offset */, 0 /* auth_len */,
 	    integ_start_offset /* auth_off */, buffer, adj_len);
@@ -1515,7 +1518,7 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
 
 	  oct_crypto_fill_fc_params (
 	    sess, inst + i, is_aead, aad_len, (u8 *) dptr_start_ptr, elts,
-	    (oct_crypto_scatter_gather_t *) (infl_req->sg_data),
+	    ((oct_crypto_scatter_gather_t *) (sg_data)) + enq_tail,
 	    crypto_total_length /* cipher_len */,
 	    crypto_start_offset /* cipher_offset */,
 	    enc_auth_len /* auth_len */, integ_start_offset /* auth_off */,
@@ -1722,9 +1725,8 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
   vlib_thread_main_t *tm = vlib_get_thread_main ();
   extern oct_plt_init_param_t oct_plt_init_param;
   oct_crypto_main_t *ocm = &oct_crypto_main;
-  oct_crypto_inflight_req_t *infl_req_queue;
   u32 n_inflight_req;
-  int i, j = 0;
+  int i;
 
   ocm->pend_q = oct_plt_init_param.oct_plt_zmalloc (
     tm->n_vlib_mains * sizeof (oct_crypto_pending_queue_t),
@@ -1755,17 +1757,13 @@ oct_conf_sw_queue (vlib_main_t *vm, vnet_dev_t *dev)
 	  goto free;
 	}
 
-      for (j = 0; j <= ocm->pend_q[i].n_desc; ++j)
+      ocm->pend_q[i].sg_data = oct_plt_init_param.oct_plt_zmalloc (
+	OCT_SCATTER_GATHER_BUFFER_SIZE * ocm->pend_q[i].n_desc,
+	CLIB_CACHE_LINE_BYTES);
+      if (ocm->pend_q[i].sg_data == NULL)
 	{
-	  infl_req_queue = &ocm->pend_q[i].req_queue[j];
-
-	  infl_req_queue->sg_data = oct_plt_init_param.oct_plt_zmalloc (
-	    OCT_SCATTER_GATHER_BUFFER_SIZE, CLIB_CACHE_LINE_BYTES);
-	  if (infl_req_queue->sg_data == NULL)
-	    {
-	      log_err (dev, "Failed to allocate crypto scatter gather memory");
-	      goto free;
-	    }
+	  log_err (dev, "Failed to allocate crypto scatter gather memory");
+	  goto free;
 	}
 
 #define _(n, s, d) ocm->pend_q[i].s = &ocm->s##_counter;
@@ -1779,15 +1777,9 @@ free:
     {
       if (ocm->pend_q[i].req_queue == NULL)
 	continue;
-      for (; j >= 0; j--)
-	{
-	  infl_req_queue = &ocm->pend_q[i].req_queue[j];
 
-	  if (infl_req_queue->sg_data == NULL)
-	    continue;
+      oct_plt_init_param.oct_plt_free (ocm->pend_q[i].sg_data);
 
-	  oct_plt_init_param.oct_plt_free (infl_req_queue->sg_data);
-	}
       oct_plt_init_param.oct_plt_free (ocm->pend_q[i].req_queue);
     }
   oct_plt_init_param.oct_plt_free (ocm->pend_q);

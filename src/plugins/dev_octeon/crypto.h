@@ -124,8 +124,6 @@ typedef struct
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
   /** Result data */
   volatile union cpt_res_s res;
-  /** Scatter gather data */
-  void *sg_data;
   /** Frame pointer */
   vnet_crypto_async_frame_t *frame;
   /** Async frame element */
@@ -150,6 +148,8 @@ typedef struct
   u16 deq_head;
   /** Number of descriptors */
   u16 n_desc;
+  /** Scatter gather data */
+  void **sg_data;
   /** Crypto counters for pending pkts, inflight operations
    *  and successfully dequeued pkts in queue */
 #define _(i, s, d) vlib_simple_counter_main_t *s;
