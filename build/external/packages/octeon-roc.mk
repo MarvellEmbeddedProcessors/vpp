@@ -4,7 +4,7 @@
 
 octeon-roc_version             := octeon-roc-SDK12.25.01
 octeon-roc_tarball             := $(octeon-roc_version).tar.gz
-octeon-roc_tarball_md5sum      := 7f6794507c58dd0e73d3baccca6aff3b
+octeon-roc_tarball_md5sum      := 43cbc76e76cbb182997b58965e500ba1
 octeon-roc_github              := https://github.com/MarvellEmbeddedProcessors/marvell-octeon-roc
 
 octeon-roc_tarball_strip_dirs  := 1
