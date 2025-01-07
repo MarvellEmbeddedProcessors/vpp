@@ -336,6 +336,151 @@ oct_tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight)
 }
 
 int
+oct_tm_sys_get_capabilities (u32 hw_if_idx, tm_capa_params_t *cap)
+{
+
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+  vnet_dev_port_t *port =
+    vnet_dev_get_port_from_dev_instance (hi->dev_instance);
+  vnet_dev_t *dev = port->dev;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_nix *nix = cd->nix;
+  int rc, max_nr_nodes = 0, i, n_lvl;
+  uint16_t schq[ROC_TM_LVL_MAX];
+
+  memset (cap, 0, sizeof (*cap));
+
+  rc = roc_nix_tm_rsrc_count (nix, schq);
+  if (rc)
+    {
+      return oct_roc_err (dev, rc, "oct_tm_sys_get_capabilities failed");
+    }
+
+  for (i = 0; i < NIX_TXSCH_LVL_TL1; i++)
+    max_nr_nodes += schq[i];
+
+  cap->n_nodes_max = max_nr_nodes + port->intf.num_tx_queues;
+
+  n_lvl = roc_nix_tm_lvl_cnt_get (nix);
+  /* Consider leaf level */
+  cap->n_levels_max = n_lvl + 1;
+  cap->non_leaf_nodes_identical = 1;
+  cap->leaf_nodes_identical = 1;
+
+  /* Shaper Capabilities */
+  cap->shaper_private_n_max = max_nr_nodes;
+  cap->shaper_n_max = max_nr_nodes;
+  cap->shaper_private_dual_rate_n_max = max_nr_nodes;
+  cap->shaper_private_rate_min = NIX_TM_MIN_SHAPER_RATE / 8;
+  cap->shaper_private_rate_max = NIX_TM_MAX_SHAPER_RATE / 8;
+  cap->shaper_private_packet_mode_supported = 1;
+  cap->shaper_private_byte_mode_supported = 1;
+  cap->shaper_pkt_length_adjust_min = NIX_TM_LENGTH_ADJUST_MIN;
+  cap->shaper_pkt_length_adjust_max = NIX_TM_LENGTH_ADJUST_MAX;
+
+  /* Schedule Capabilities */
+  cap->sched_n_children_max = schq[n_lvl - 1];
+  cap->sched_sp_n_priorities_max = NIX_TM_TLX_SP_PRIO_MAX;
+  cap->sched_wfq_n_children_per_group_max = cap->sched_n_children_max;
+  cap->sched_wfq_n_groups_max = 1;
+  cap->sched_wfq_weight_max = roc_nix_tm_max_sched_wt_get ();
+  cap->sched_wfq_packet_mode_supported = 1;
+  cap->sched_wfq_byte_mode_supported = 1;
+
+  return 0;
+}
+
+int
+oct_tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *cap,
+				   u32 lvl)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
+  vnet_dev_port_t *port =
+    vnet_dev_get_port_from_dev_instance (hi->dev_instance);
+  vnet_dev_t *dev = port->dev;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_nix *nix = cd->nix;
+  int rc, n_lvl;
+  uint16_t schq[ROC_TM_LVL_MAX];
+
+  memset (cap, 0, sizeof (*cap));
+
+  rc = roc_nix_tm_rsrc_count (nix, schq);
+  if (rc)
+    {
+      return oct_roc_err (dev, rc, "oct_tm_sys_get_capabilities failed");
+    }
+
+  n_lvl = roc_nix_tm_lvl_cnt_get (nix);
+
+  if (roc_nix_tm_lvl_is_leaf (nix, lvl))
+    {
+      /* Leaf */
+      cap->n_nodes_max = port->intf.num_tx_queues;
+      cap->n_nodes_leaf_max = port->intf.num_tx_queues;
+      cap->leaf_nodes_identical = 1;
+    }
+  else if (lvl == ROC_TM_LVL_ROOT)
+    {
+      /* Root node, a.k.a. TL2(vf)/TL1(pf) */
+      cap->n_nodes_max = 1;
+      cap->n_nodes_nonleaf_max = 1;
+      cap->non_leaf_nodes_identical = 1;
+
+      cap->nonleaf.shaper_private_supported = true;
+      cap->nonleaf.shaper_private_dual_rate_supported =
+	roc_nix_tm_lvl_have_link_access (nix, lvl) ? false : true;
+      cap->nonleaf.shaper_private_rate_min = NIX_TM_MIN_SHAPER_RATE / 8;
+      cap->nonleaf.shaper_private_rate_max = NIX_TM_MAX_SHAPER_RATE / 8;
+      cap->nonleaf.shaper_private_packet_mode_supported = 1;
+      cap->nonleaf.shaper_private_byte_mode_supported = 1;
+
+      cap->nonleaf.sched_n_children_max = schq[lvl];
+      cap->nonleaf.sched_sp_n_priorities_max =
+	roc_nix_tm_max_prio (nix, lvl) + 1;
+      cap->nonleaf.sched_wfq_n_groups_max = 1;
+      cap->nonleaf.sched_wfq_weight_max = roc_nix_tm_max_sched_wt_get ();
+      cap->nonleaf.sched_wfq_packet_mode_supported = 1;
+      cap->nonleaf.sched_wfq_byte_mode_supported = 1;
+    }
+  else if (lvl < ROC_TM_LVL_MAX)
+    {
+      /* TL2, TL3, TL4, MDQ */
+      cap->n_nodes_max = schq[lvl];
+      cap->n_nodes_nonleaf_max = cap->n_nodes_max;
+      cap->non_leaf_nodes_identical = 1;
+
+      cap->nonleaf.shaper_private_supported = true;
+      cap->nonleaf.shaper_private_dual_rate_supported = true;
+      cap->nonleaf.shaper_private_rate_min = NIX_TM_MIN_SHAPER_RATE / 8;
+      cap->nonleaf.shaper_private_rate_max = NIX_TM_MAX_SHAPER_RATE / 8;
+      cap->nonleaf.shaper_private_packet_mode_supported = 1;
+      cap->nonleaf.shaper_private_byte_mode_supported = 1;
+
+      /* MDQ doesn't support Strict Priority */
+      if ((int) lvl == (n_lvl - 1))
+	cap->nonleaf.sched_n_children_max = port->intf.num_tx_queues;
+      else
+	cap->nonleaf.sched_n_children_max = schq[lvl - 1];
+      cap->nonleaf.sched_sp_n_priorities_max =
+	roc_nix_tm_max_prio (nix, lvl) + 1;
+      cap->nonleaf.sched_wfq_n_groups_max = 1;
+      cap->nonleaf.sched_wfq_weight_max = roc_nix_tm_max_sched_wt_get ();
+      cap->nonleaf.sched_wfq_packet_mode_supported = 1;
+      cap->nonleaf.sched_wfq_byte_mode_supported = 1;
+    }
+  else
+    {
+      /* unsupported level */
+      return oct_roc_err (
+	dev, rc, "oct_tm_sys_get_capabilities unsupported level,failed");
+    }
+  return 0;
+}
+
+int
 oct_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_id,
 			    tm_stats_params_t *stats)
 {
@@ -455,6 +600,8 @@ tm_system_t dev_oct_tm_ops = {
   .node_add = oct_tm_sys_node_add,
   .node_delete = oct_tm_sys_node_delete,
   .node_read_stats = oct_tm_sys_node_read_stats,
+  .tm_get_capabilities = oct_tm_sys_get_capabilities,
+  .tm_level_get_capabilities = oct_tm_sys_level_get_capabilities,
   .shaper_profile_create = oct_tm_sys_shaper_profile_create,
   .node_shaper_update = oct_tm_sys_node_shaper_update,
   .shaper_profile_delete = oct_tm_sys_shaper_profile_delete,
