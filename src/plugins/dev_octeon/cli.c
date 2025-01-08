@@ -222,22 +222,66 @@ oct_ipsec_inline_counters_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   roc_nix_inl_dev_stats_get (&stats);
 
-  vlib_cli_output (vm, "rx_ucast %u", stats.rx_ucast);
-  vlib_cli_output (vm, "rx_bcast %u", stats.rx_bcast);
-  vlib_cli_output (vm, "rx_mcast %u", stats.rx_mcast);
-  vlib_cli_output (vm, "rx_drop %u", stats.rx_drop);
-  vlib_cli_output (vm, "rx_fcs %u", stats.rx_fcs);
-  vlib_cli_output (vm, "rx_err %u", stats.rx_err);
-  vlib_cli_output (vm, "rx_drop_bcast %u", stats.rx_drop_bcast);
-  vlib_cli_output (vm, "rx_drop_mcast %u", stats.rx_drop_mcast);
-  vlib_cli_output (vm, "rx_drop_l3_bcast %u", stats.rx_drop_l3_bcast);
-  vlib_cli_output (vm, "rx_drop_l3_bcast %u", stats.rx_drop_l3_mcast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_ucast", stats.rx_ucast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_bcast", stats.rx_bcast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_mcast", stats.rx_mcast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_drop", stats.rx_drop);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_fcs", stats.rx_fcs);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_err", stats.rx_err);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_drop_bcast", stats.rx_drop_bcast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_drop_mcast", stats.rx_drop_mcast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_drop_l3_bcast",
+		   stats.rx_drop_l3_bcast);
+  vlib_cli_output (vm, "%-40s %20Ld", "rx_drop_l3_bcast",
+		   stats.rx_drop_l3_mcast);
 
   return 0;
 }
+
+/*?
+ * This command displays OCTEON IPsec inline device counters
+ *
+ * @cliexpar
+ * Example of how to display OCTEON IPsec inline device counters:
+ * @cliexstart{show octeon ipsec inline counters}
+ * rx_ucast                                                    10
+ * rx_bcast                                                    0
+ * rx_mcast                                                    0
+ * rx_drop                                                     0
+ * rx_fcs                                                      0
+ * rx_err                                                      0
+ * rx_drop_bcast                                               0
+ * rx_drop_mcast                                               0
+ * rx_drop_l3_bcast                                            0
+ * rx_drop_l3_bcast                                            0
+ * @cliexend
+?*/
 
 VLIB_CLI_COMMAND (oct_ipsec_inline_counters_command, static) = {
   .path = "show octeon ipsec inline counters",
   .short_help = "show ipsec inline counters",
   .function = oct_ipsec_inline_counters_command_fn,
+};
+
+static clib_error_t *
+oct_ipsec_inline_counters_clear_command_fn (vlib_main_t *vm,
+					    unformat_input_t *input,
+					    vlib_cli_command_t *cmd)
+{
+  roc_nix_inl_dev_stats_reset ();
+
+  return 0;
+}
+
+/*?
+ * This command clears OCTEON IPsec inline device counters
+ *
+ * @cliexpar
+ * @cliexstart{clear octeon ipsec inline counters}
+ * @cliexend
+?*/
+VLIB_CLI_COMMAND (oct_ipsec_inline_counters_clear_command, static) = {
+  .path = "clear octeon ipsec inline counters",
+  .short_help = "clear ipsec inline counters",
+  .function = oct_ipsec_inline_counters_clear_command_fn,
 };
