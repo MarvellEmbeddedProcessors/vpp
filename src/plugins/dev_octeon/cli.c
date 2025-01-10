@@ -212,6 +212,13 @@ oct_ipsec_inline_counters_command_fn (vlib_main_t *vm, unformat_input_t *input,
 				      vlib_cli_command_t *cmd)
 {
   struct roc_nix_stats stats;
+  oct_inl_dev_main_t *oim = &oct_inl_dev_main;
+
+  if (!oim->inl_dev)
+    {
+      return clib_error_create (
+	"No Inline device attached to dev-octeon plugin");
+    }
 
   roc_nix_inl_dev_stats_get (&stats);
 
