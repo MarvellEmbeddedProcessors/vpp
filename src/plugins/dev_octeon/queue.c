@@ -160,7 +160,7 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
     .flow_tag_width = 32,
   };
 
-  if ((rrv = roc_nix_rq_init (nix, &crq->rq, 1 /* disable */)))
+  if ((rrv = roc_nix_rq_init (nix, &crq->rq, false /* disable */)))
     {
       oct_rxq_deinit (vm, rxq);
       return oct_roc_err (dev, rrv, "roc_nix_rq_init(qid = %u) failed",
