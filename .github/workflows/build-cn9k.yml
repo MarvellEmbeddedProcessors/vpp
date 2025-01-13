@@ -59,6 +59,7 @@ jobs:
           [ -s /tmp/tags ] && NIGHTLY=false || NIGHTLY=true
           echo "PKG_VERSION_NAME=`./src/scripts/version | awk -F '-' '{print $1}'`" >> "${PWD}/artifacts/env"
           echo "MRVL_PKG_VERSION=`cat MRVL_VERSION`" >> "${PWD}/artifacts/env"
+          echo "CPT_PKG_VERSION=`cat CPT_PKG_VERSION`" >> "${PWD}/artifacts/env"
           echo "DPDK_PKG_VERSION=`cat DPDK_VERSION | grep RELEASE_VERSION | awk -F'=' '{print $2}'`" >> "${PWD}/artifacts/env"
           echo "DPDK_BASE_PKG_VERSION=`cat DPDK_VERSION | grep BASE_VERSION | awk -F'=' '{print $2}' | awk -F'.' '{print $1"."$2}'`" >> "${PWD}/artifacts/env"
           echo "PKG_POSTFIX=${PKG_POSTFIX}" >> "${PWD}/artifacts/env"
@@ -149,7 +150,7 @@ jobs:
             echo 'Package: vpp-'$PKG_VERSION_NAME'-cn9k'$PKG_POSTFIX >> DEBIAN/control
             echo 'Version: '$MRVL_PKG_VERSION >> DEBIAN/control
             echo "Maintainer: Jerin Jacob (jerinj@marvell.com)" >> DEBIAN/control
-            echo 'Depends: python3, python3-ply, dpdk-'$DPDK_BASE_PKG_VERSION'-cn9k (= '$DPDK_PKG_VERSION'), cpt-firmware-cn9k'${FW_PKG_POSTFIX}' (= '$MRVL_PKG_VERSION')' >> DEBIAN/control
+            echo 'Depends: python3, python3-ply, dpdk-'$DPDK_BASE_PKG_VERSION'-cn9k (= '$DPDK_PKG_VERSION'), cpt-firmware-cn9k'${FW_PKG_POSTFIX}' (= '$CPT_PKG_VERSION')' >> DEBIAN/control
             echo "Architecture: arm64" >> DEBIAN/control
             echo "Homepage: https://wiki.fd.io/view/VPP" >> DEBIAN/control
             echo "Description: Vector Packet Processing (VPP) for Octeon9" >> DEBIAN/control
