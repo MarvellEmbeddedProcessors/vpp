@@ -489,10 +489,13 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
 
   foreach_int (i, 2, 4)
     {
-      rv = vnet_dev_pci_map_region (vm, dev, i,
-				    &cd->plt_pci_dev.mem_resource[i].addr);
-      if (rv != VNET_DEV_OK)
-	return rv;
+      if (i == 2 || !roc_model_is_cn20k ())
+	{
+	  rv = vnet_dev_pci_map_region (vm, dev, i,
+					&cd->plt_pci_dev.mem_resource[i].addr);
+	  if (rv != VNET_DEV_OK)
+	    return rv;
+	}
     }
 
   if ((rv = vnet_dev_pci_bus_master_enable (vm, dev)))

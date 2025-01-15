@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright(c) 2022 Cisco Systems, Inc.
 
-if (NOT VPP_PLATFORM_NAME STREQUAL "octeon10" AND NOT VPP_PLATFORM_NAME STREQUAL "octeon9")
+if (NOT VPP_PLATFORM_NAME STREQUAL "octeon20" AND NOT VPP_PLATFORM_NAME STREQUAL "octeon10" AND NOT VPP_PLATFORM_NAME STREQUAL "octeon9")
   return()
 endif()
 
