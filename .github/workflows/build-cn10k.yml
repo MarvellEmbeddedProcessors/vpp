@@ -190,6 +190,7 @@ jobs:
           else
             echo "Release not found"
           fi
+        continue-on-error: true
       - name: Release VPP cn10k package
         uses: softprops/action-gh-release@v2.0.4
         if: ${{ github.event_name == 'push' }}
