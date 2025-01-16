@@ -62,6 +62,9 @@ oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
   oct_crypto_sess_t *session;
   vnet_crypto_key_t *key;
   oct_crypto_key_t *ckey;
+  oct_crypto_dev_t *ocd;
+
+  ocd = ocm->crypto_dev[op_type];
 
   key = vnet_crypto_get_key (key_index);
 
@@ -88,6 +91,7 @@ oct_crypto_session_create (vlib_main_t *vm, vnet_crypto_key_index_t key_index,
       session = oct_crypto_session_alloc (vm, op_type);
       if (session == NULL)
 	return -1;
+      session->crypto_dev = ocd;
     }
 
   oct_map_keyindex_to_session (session, key_index, op_type);
@@ -116,6 +120,12 @@ oct_crypto_key_del_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 	    ocm->keys[VNET_CRYPTO_OP_TYPE_ENCRYPT], ckey->sess->key_index);
 	  ckey_linked->sess = NULL;
 	}
+
+      /* Trigger CTX flush + invalidate to remove from CTX_CACHE */
+      if (oct_hw_ctx_cache_enable ())
+	roc_cpt_lf_ctx_flush (&ckey->sess->crypto_dev->lf,
+			      &ckey->sess->cpt_ctx.se_ctx, true);
+
       oct_plt_init_param.oct_plt_free (ckey->sess);
       ckey->sess = NULL;
     }
@@ -132,6 +142,12 @@ oct_crypto_key_del_handler (vlib_main_t *vm, vnet_crypto_key_index_t key_index)
 	    ocm->keys[VNET_CRYPTO_OP_TYPE_DECRYPT], ckey->sess->key_index);
 	  ckey_linked->sess = NULL;
 	}
+
+      /* Trigger CTX flush + invalidate to remove from CTX_CACHE */
+      if (oct_hw_ctx_cache_enable ())
+	roc_cpt_lf_ctx_flush (&ckey->sess->crypto_dev->lf,
+			      &ckey->sess->cpt_ctx.se_ctx, true);
+
       oct_plt_init_param.oct_plt_free (ckey->sess);
       ckey->sess = NULL;
     }
