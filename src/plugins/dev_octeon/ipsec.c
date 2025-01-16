@@ -854,7 +854,7 @@ oct_pool_inl_meta_pool_cb (u64 *aura_handle, uintptr_t *mpool, u32 buf_sz,
   npapool.nat_align = 1;
 
   rv = roc_npa_pool_create (&roc_aura_handle, buf_sz, nb_bufs, &aura, &npapool,
-			    ROC_NPA_ZERO_AURA_F);
+			    mempool_name ? 0 : ROC_NPA_ZERO_AURA_F);
   if (rv)
     {
       clib_warning ("roc_npa_pool_create failed with '%s' error",
