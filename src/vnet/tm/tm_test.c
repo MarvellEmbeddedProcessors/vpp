@@ -221,7 +221,7 @@ api_tm_sys_shaper_profile_create (vat_main_t *vam)
   u64 shaper_peak_rate = 0;
   u64 shaper_peak_burst = 0;
   u32 tm_shaper_id = 0;
-  u8 sw_if_idx_set = 0;
+  u8 sw_if_idx_set = 0, tm_shaper_id_set = 0;
   u32 is_packet_mode = 0;
   u32 sw_if_idx = 0;
   int ret;
@@ -235,7 +235,7 @@ api_tm_sys_shaper_profile_create (vat_main_t *vam)
       if (unformat (i, "sw_if_idx %u", &sw_if_idx))
 	sw_if_idx_set = 1;
       else if (unformat (i, "shaper_id %u", &tm_shaper_id))
-	;
+	tm_shaper_id_set = 1;
       else if (unformat (i, "packet_mode %u", &is_packet_mode))
 	;
       else if (unformat (i, "shaper_peak_burst %llu", &shaper_peak_burst))
@@ -255,7 +255,7 @@ api_tm_sys_shaper_profile_create (vat_main_t *vam)
 	}
     }
 
-  if (!sw_if_idx_set)
+  if (!sw_if_idx_set || !tm_shaper_id_set)
     return -EINVAL;
 
   M (TM_SYS_SHAPER_PROFILE_CREATE, mp);
@@ -277,7 +277,7 @@ api_tm_sys_shaper_profile_create (vat_main_t *vam)
 static int
 api_tm_sys_node_shaper_update (vat_main_t *vam)
 {
-  u8 sw_if_idx_set = 0;
+  u8 sw_if_idx_set = 0, shaper_profile_set = 0;
   unformat_input_t *i = vam->input;
   vl_api_tm_sys_node_shaper_update_t *mp;
   u32 msg_size = sizeof (*mp);
@@ -292,8 +292,8 @@ api_tm_sys_node_shaper_update (vat_main_t *vam)
     {
       if (unformat (i, "sw_if_idx %u", &sw_if_idx))
 	sw_if_idx_set = 1;
-      else if (unformat (i, "shaper_profile %u", &shaper_profile))
-	shaper_profile = 1;
+      else if (unformat (i, "shaper_profile %d", &shaper_profile))
+	shaper_profile_set = 1;
       else if (unformat (i, "node_id %u", &node_id))
 	;
       else
@@ -303,7 +303,7 @@ api_tm_sys_node_shaper_update (vat_main_t *vam)
 	}
     }
 
-  if (!sw_if_idx_set || !shaper_profile)
+  if (!sw_if_idx_set || !shaper_profile_set)
     return -EINVAL;
 
   M (TM_SYS_NODE_SHAPER_UPDATE, mp);
@@ -323,7 +323,7 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
   vl_api_tm_sys_shaper_profile_delete_t *mp;
   unformat_input_t *i = vam->input;
   u32 msg_size = sizeof (*mp);
-  u8 sw_if_idx_set = 0;
+  u8 sw_if_idx_set = 0, shaper_id_set = 0;
   u32 sw_if_idx = 0;
   u32 shaper_id = 0;
   int ret;
@@ -335,9 +335,8 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
     {
       if (unformat (i, "sw_if_idx %u", &sw_if_idx))
 	sw_if_idx_set = 1;
-
-      if (unformat (i, "shaper_id %u", &shaper_id))
-	;
+      else if (unformat (i, "shaper_id %u", &shaper_id))
+	shaper_id_set = 1;
       else
 	{
 	  clib_warning ("Invalid input, unknown parameter");
@@ -345,7 +344,7 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
 	}
     }
 
-  if (!shaper_id && !sw_if_idx_set)
+  if (!sw_if_idx_set || !shaper_id_set)
     return -EINVAL;
 
   M (TM_SYS_SHAPER_PROFILE_DELETE, mp);
@@ -640,7 +639,7 @@ vl_api_tm_sys_node_shaper_update_reply_t_handler (
   vl_api_tm_sys_node_shaper_update_reply_t *mp)
 {
   vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node updated shaper id : %u\n",
+  clib_warning ("TM node updated shaper id : %d\n",
 		clib_net_to_host_u32 (mp->shaper_id));
 
   vam->result_ready = 1;
