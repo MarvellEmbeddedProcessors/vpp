@@ -117,38 +117,36 @@ oct_plt_zmalloc (u32 size, u32 align)
   return oct_drv_physmem_alloc (vm, size, align);
 }
 
-static oct_plt_memzone_t *
-memzone_get (u32 index)
+static void *
+oct_plt_realloc (void *addr, u32 size, u32 align)
 {
-  if (index == ((u32) ~0))
-    return 0;
-
-  return pool_elt_at_index (memzone_list.mem_pool, index);
-}
-
-static int
-oct_plt_memzone_free (const oct_plt_memzone_t *name)
-{
-  uword *p;
-  p = hash_get_mem (memzone_list.memzone_by_name, name);
-
-  if (p[0] == ((u32) ~0))
-    return -EINVAL;
-
-  hash_unset_mem (memzone_list.memzone_by_name, name);
-
-  pool_put_index (memzone_list.mem_pool, p[0]);
-
-  return 0;
+  if (align)
+    return clib_mem_realloc_aligned (addr, size, align);
+  else
+    return clib_mem_realloc (addr, size);
 }
 
 static oct_plt_memzone_t *
 oct_plt_memzone_lookup (const char *name)
 {
-  uword *p;
-  p = hash_get_mem (memzone_list.memzone_by_name, name);
-  if (p)
-    return memzone_get (p[0]);
+  oct_plt_memzone_t *mem_pool;
+
+  pool_foreach (mem_pool, memzone_list.mem_pool)
+    {
+      if (!clib_strcmp (mem_pool->name, name))
+	return mem_pool;
+    }
+
+  return 0;
+}
+
+static int
+oct_plt_memzone_free (const oct_plt_memzone_t *mz)
+{
+  if (!mz || !oct_plt_memzone_lookup (mz->name))
+    return -EINVAL;
+
+  pool_put (memzone_list.mem_pool, mz);
 
   return 0;
 }
@@ -168,7 +166,7 @@ oct_plt_memzone_reserve_aligned (const char *name, u64 len, u8 socket,
 
   mem_pool->addr = p;
   mem_pool->index = mem_pool - memzone_list.mem_pool;
-  hash_set_mem (memzone_list.memzone_by_name, name, mem_pool->index);
+  strcpy (mem_pool->name, name);
 
   return mem_pool;
 }
@@ -419,6 +417,7 @@ oct_plt_init_param_t oct_plt_init_param = {
   .oct_plt_log = oct_plt_log,
   .oct_plt_free = oct_plt_free,
   .oct_plt_zmalloc = oct_plt_zmalloc,
+  .oct_plt_realloc = oct_plt_realloc,
   .oct_plt_memzone_free = oct_plt_memzone_free,
   .oct_plt_memzone_lookup = oct_plt_memzone_lookup,
   .oct_plt_memzone_reserve_aligned = oct_plt_memzone_reserve_aligned,
