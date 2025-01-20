@@ -892,6 +892,11 @@ M:	Matus Fabian <matfabia@cisco.com>
 M:	Adrian Villin <avillin@cisco.com>
 F:	extras/hs-test
 
+CI - Enable VPP dev-ci
+I:	ci
+M:	Nawal Kishor <nkishor@marvell.com>
+F:	ci/
+
 THE REST
 I:	misc
 M:	vpp-dev Mailing List <vpp-dev@fd.io>
