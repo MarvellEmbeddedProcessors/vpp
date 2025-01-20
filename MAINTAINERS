@@ -901,6 +901,11 @@ M:	Filip Tehlar <ftehlar@cisco.com>
 M:	Maros Ondrejicka <maros.ondrejicka@pantheon.tech>
 F:	extras/hs-test
 
+CI - Enable VPP dev-ci
+I:	ci
+M:	Nawal Kishor <nkishor@marvell.com>
+F:	ci/
+
 THE REST
 I:	misc
 M:	vpp-dev Mailing List <vpp-dev@fd.io>
