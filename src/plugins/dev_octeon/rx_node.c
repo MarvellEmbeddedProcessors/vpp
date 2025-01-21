@@ -479,6 +479,14 @@ oct_rx_ipsec_attach_tail (vlib_main_t *vm, const union nix_rx_parse_u *rxp0,
 
 	  seg_buf->current_length = sg_len;
 	  bi = vlib_get_buffer_index (vm, seg_buf);
+
+	  if (seg_buf->current_length == 0)
+	    {
+	      vlib_buffer_free_no_next (vm, &bi, 1);
+	      total_segs++;
+	      return total_segs;
+	    }
+
 	  last_buf->flags |= VLIB_BUFFER_NEXT_PRESENT;
 	  last_buf->next_buffer = bi;
 	  last_buf = seg_buf;

@@ -167,6 +167,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   struct roc_nix *nix = cd->nix;
   vnet_dev_rv_t rv = -1;
   bool is_allmulti_enable = false, is_pause_frame_enable = false;
+  u32 total_sz = 0;
   int rrv;
 
   log_notice (dev, "port init: port %u", port->port_id);
@@ -260,7 +261,6 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
   cp->npc_initialized = 1;
 
-  u64 total_sz = 0;
   foreach_vnet_dev_port_rx_queue (q, port)
     total_sz += q->size;
 

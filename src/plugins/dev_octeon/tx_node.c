@@ -801,7 +801,7 @@ oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node, oct_tx_ctx_t *ctx,
 	       vnet_dev_tx_queue_t *txq, u16 tx_pkts, vlib_buffer_t **bufs)
 {
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
-  u32 desc_sz = 4;
+  u32 desc_sz = 10 /* Worst case - Send hdr + Two SG with 3 segs each */;
   union nix_send_sg_s *sg8, *sg9, *sg10, *sg11, *sg12, *sg13, *sg14, *sg15;
   struct nix_send_hdr_s *send_hdr12, *send_hdr13, *send_hdr14, *send_hdr15;
   struct nix_send_hdr_s *send_hdr8, *send_hdr9, *send_hdr10, *send_hdr11;
