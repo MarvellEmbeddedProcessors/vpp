@@ -786,11 +786,11 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      b[0]->current_length = oct_get_len_from_meta (
 		cpt_hdr0, d[0].parse.w[0], d[0].parse.w[4]);
 	      b[1]->current_length = oct_get_len_from_meta (
-		cpt_hdr0, d[1].parse.w[0], d[1].parse.w[4]);
+		cpt_hdr1, d[1].parse.w[0], d[1].parse.w[4]);
 	      b[2]->current_length = oct_get_len_from_meta (
-		cpt_hdr0, d[2].parse.w[0], d[2].parse.w[4]);
+		cpt_hdr2, d[2].parse.w[0], d[2].parse.w[4]);
 	      b[3]->current_length = oct_get_len_from_meta (
-		cpt_hdr0, d[3].parse.w[0], d[3].parse.w[4]);
+		cpt_hdr3, d[3].parse.w[0], d[3].parse.w[4]);
 
 	      idx0 = cpt_hdr0->w0.cookie;
 	      idx1 = cpt_hdr1->w0.cookie;
@@ -911,46 +911,46 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      cpt_hdr0 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
-					     cpt_hdr0, buffs, &err_flags);
+					     cpt_hdr0, &buffs[0], &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	    }
 	  else
 	    oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, meta_aura_handle,
-				 buffs, &err_flags);
+				 &buffs[0], &err_flags);
 
 	  if (is_b1_from_cpt)
 	    {
 	      cpt_hdr1 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[1], &b[1], ctx, &bt,
-					     cpt_hdr1, buffs, &err_flags);
+					     cpt_hdr1, &buffs[1], &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
 	    }
 	  else
 	    oct_rx_vlib_from_cq (vm, &d[1], &b[1], ctx, &bt, meta_aura_handle,
-				 buffs, &err_flags);
+				 &buffs[1], &err_flags);
 	  if (is_b2_from_cpt)
 	    {
 	      cpt_hdr2 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[2], &b[2], ctx, &bt,
-					     cpt_hdr2, buffs, &err_flags);
+					     cpt_hdr2, &buffs[2], &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr2, laddr, &loff);
 	    }
 	  else
 	    oct_rx_vlib_from_cq (vm, &d[2], &b[2], ctx, &bt, meta_aura_handle,
-				 buffs, &err_flags);
+				 &buffs[2], &err_flags);
 	  if (is_b3_from_cpt)
 	    {
 	      cpt_hdr3 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[3], &b[3], ctx, &bt,
-					     cpt_hdr3, buffs, &err_flags);
+					     cpt_hdr3, &buffs[3], &err_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr3, laddr, &loff);
 	    }
 	  else
 	    oct_rx_vlib_from_cq (vm, &d[3], &b[3], ctx, &bt, meta_aura_handle,
-				 buffs, &err_flags);
+				 &buffs[3], &err_flags);
 	}
       buffs += 4;
       /* Check if lmtline border is crossed and adjust lnum */
