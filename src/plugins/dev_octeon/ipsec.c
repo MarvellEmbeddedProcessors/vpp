@@ -328,10 +328,15 @@ oct_ipsec_inb_session_update (oct_ipsec_session_t *sess, ipsec_sa_t *sa)
 
   /*
    * Default options for pkt_out and pkt_fmt are with
-   * second pass meta and no defrag.
+   * second pass meta and defrag.
    */
   roc_sa->w0.s.pkt_format = ROC_IE_OT_SA_PKT_FMT_META;
-  roc_sa->w0.s.pkt_output = ROC_IE_OT_SA_PKT_OUTPUT_NO_FRAG;
+
+  if (sa->flags & IPSEC_SA_FLAG_IS_INL_REASSEMBLY)
+    roc_sa->w0.s.pkt_output = ROC_IE_OT_SA_PKT_OUTPUT_HW_BASED_DEFRAG;
+  else
+    roc_sa->w0.s.pkt_output = ROC_IE_OT_SA_PKT_OUTPUT_NO_FRAG;
+
   roc_sa->w0.s.pkind = ROC_IE_OT_CPT_PKIND;
 
   offset = offsetof (struct roc_ot_ipsec_inb_sa, ctx);
@@ -800,6 +805,7 @@ oct_ipsec_inl_dev_inb_cfg (vlib_main_t *vm, vnet_dev_t *dev,
 {
   oct_inl_dev_main_t *inl_dev_main = &oct_inl_dev_main;
   oct_device_t *cd = vnet_dev_get_data (dev);
+  struct roc_cpt_rxc_time_cfg rxc_cfg = { 0 };
   int rrv;
 
   cd->nix->ipsec_in_min_spi = inl_dev_main->in_min_spi;
@@ -814,6 +820,13 @@ oct_ipsec_inl_dev_inb_cfg (vlib_main_t *vm, vnet_dev_t *dev,
 
   roc_nix_inb_mode_set (cd->nix, true);
   roc_nix_inl_inb_set (cd->nix, true);
+
+  if ((rrv = roc_nix_reassembly_configure (&rxc_cfg, 1000)))
+    {
+      log_err (dev, "roc_nix_reassembly_configure failed - ROC error %s [%d]",
+	       roc_error_msg_get (rrv), rrv);
+      return VNET_DEV_ERR_INTERNAL;
+    }
 
   inl_dev_main->inb_sa_base = roc_nix_inl_inb_sa_base_get (NULL, true);
   inl_dev_main->inb_sa_sz = roc_nix_inl_inb_sa_sz (NULL, true);

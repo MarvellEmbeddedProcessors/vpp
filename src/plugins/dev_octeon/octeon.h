@@ -22,6 +22,7 @@
 #include <dev_octeon/hw_defs.h>
 #include <dev_octeon/ipsec.h>
 
+#define OCT_FRAME_SIZE (VLIB_FRAME_SIZE * 4)
 #define OCT_EXT_HDR_SIZE                                                      \
   PLT_ALIGN (sizeof (oct_ipsec_outbound_pkt_meta_t), ROC_ALIGN)
 #define OCT_NPA_MAX_POOLS	   8192
@@ -269,5 +270,16 @@ typedef struct
 } oct_tx_trace_t;
 
 extern tm_system_t dev_oct_tm_ops;
+
+#define foreach_oct_fp_flag                                                   \
+  _ (UNUSED, 0)                                                               \
+  _ (TRACE_EN, 1)
+
+typedef enum
+{
+#define _(name, bit) OCT_FP_FLAG_##name = (1 << bit),
+  foreach_oct_fp_flag
+#undef _
+} oct_fp_flag_t;
 
 #endif /* _OCTEON_H_ */
