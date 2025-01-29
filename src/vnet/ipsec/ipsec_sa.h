@@ -122,7 +122,8 @@ typedef struct ipsec_key_t_
   _ (512, IS_ASYNC, "async")                                                  \
   _ (1024, NO_ALGO_NO_DROP, "no-algo-no-drop")                                \
   _ (2048, IS_NULL_GMAC, "null-gmac")                                         \
-  _ (4096, ANTI_REPLAY_HUGE, "anti-replay-huge")
+  _ (4096, ANTI_REPLAY_HUGE, "anti-replay-huge")                              \
+  _ (8192, IS_INL_REASSEMBLY, "inline-reassembly")
 
 typedef enum ipsec_sad_flags_t_
 {
