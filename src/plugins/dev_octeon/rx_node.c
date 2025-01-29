@@ -24,12 +24,34 @@ typedef struct
   u32 n_rx_pkts;
   u32 n_rx_bytes;
   u32 n_segs;
+  u16 buffer_start_index;
 } oct_rx_node_ctx_t;
 
 static_always_inline vlib_buffer_t *
 oct_seg_to_bp (void *p)
 {
   return (vlib_buffer_t *) p - 1;
+}
+
+static_always_inline void
+oct_rx_verify_vlib (vlib_main_t *vm, vlib_buffer_t *b)
+{
+  /*
+   * Warning: Since this assertion is performed in a critical section,
+   * with increasing number of worker cores, scaling of packet receive-rates
+   * will be impacted in debug builds
+   */
+  ASSERT (VLIB_BUFFER_KNOWN_ALLOCATED ==
+	  vlib_buffer_is_known (vm, vlib_get_buffer_index (vm, b)));
+}
+
+static_always_inline u32
+oct_rx_n_segs (vlib_main_t *vm, const oct_nix_rx_parse_t *rxp)
+{
+  struct nix_rx_sg_s *sg;
+
+  sg = (struct nix_rx_sg_s *) (((char *) rxp) + sizeof (rxp->f));
+  return sg->segs;
 }
 
 static_always_inline void
@@ -104,6 +126,395 @@ done:
   h->flags |= VLIB_BUFFER_NEXT_PRESENT | VLIB_BUFFER_TOTAL_LENGTH_VALID;
   ctx->n_rx_bytes += tail_sz;
   ctx->n_segs += n_tail_segs;
+}
+
+/*
+ * Read upto 4 fragments in case of successful reassembly.
+ * Fragments which are further segmented are not
+ * supported currently.
+ */
+static_always_inline u8
+oct_rx_ipsec_reassembly_success (vlib_main_t *vm, vlib_buffer_template_t *bt,
+				 struct cpt_cn10k_parse_hdr_s *hdr,
+				 oct_nix_rx_cqe_desc_t *d, vlib_buffer_t *buf,
+				 u32 *olen, u32 *esp_len, u32 l2_ol3_hdr_size)
+{
+  oct_nix_rx_parse_t *rxp_ptr2, *rxp_ptr3;
+  oct_nix_rx_parse_t *rxp_ptr, *rxp_ptr1;
+  u16 frag_size1, frag_size2, frag_size3;
+  vlib_buffer_t *b0, *b1, *b2, *b3;
+  struct cpt_frag_info_s *frag_info;
+  oct_nix_rx_parse_t *rxp_meta = &d->parse;
+  u32 offset, l2_l3_inner_hdr_size;
+  u64 *wqe_ptr2, *wqe_ptr3;
+  u64 *wqe_ptr, *wqe_ptr1;
+  uint64_t *frag_ptr;
+  u8 frag_cnt;
+
+  wqe_ptr = (u64 *) clib_net_to_host_u64 (hdr->wqe_ptr);
+  rxp_ptr = (oct_nix_rx_parse_t *) (wqe_ptr + 1);
+  ASSERT (oct_rx_n_segs (vm, rxp_ptr) == 1);
+
+  l2_l3_inner_hdr_size = rxp_meta->f.ldptr - rxp_meta->f.laptr;
+  frag_cnt = hdr->w0.num_frags;
+
+  buf->flags |= VLIB_BUFFER_TOTAL_LENGTH_VALID;
+  buf->total_length_not_including_first_buffer = 0;
+  b0 = buf;
+
+  /*
+   * fi_offset is 8B offset from cpt_parse_hdr_s + fi_pad to frag_info_s.
+   * fi_offset 0 indicates 256B.
+   */
+  offset = hdr->w2.fi_offset;
+  offset = (((offset - 1) & 0x1f) + 1) * 8;
+  frag_info = PLT_PTR_ADD (hdr, offset);
+
+  if (frag_cnt == 2)
+    {
+      frag_size1 = clib_net_to_host_u16 (frag_info->w1.frag_size1);
+      wqe_ptr1 = (u64 *) clib_net_to_host_u64 (hdr->frag1_wqe_ptr);
+      b1 = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+      rxp_ptr1 = (oct_nix_rx_parse_t *) (wqe_ptr1 + 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr1) == 1);
+
+      oct_rx_verify_vlib (vm, b1);
+      b1->template = *bt;
+
+      *olen += rxp_ptr1->f.pkt_lenm1 + 1;
+      *esp_len += rxp_ptr1->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+
+      b1->current_length = frag_size1;
+      b1->current_data = l2_l3_inner_hdr_size;
+
+      b0->total_length_not_including_first_buffer += b1->current_length;
+      b0->flags |= VLIB_BUFFER_NEXT_PRESENT;
+      b0->next_buffer = vlib_get_buffer_index (vm, b1);
+
+      return 2;
+    }
+
+  if (PREDICT_FALSE (frag_cnt == 3))
+    {
+      frag_ptr = (uint64_t *) (frag_info + 1);
+
+      frag_size1 = clib_net_to_host_u16 (frag_info->w1.frag_size1);
+      frag_size2 = clib_net_to_host_u16 (frag_info->w1.frag_size2);
+
+      wqe_ptr1 = (u64 *) clib_net_to_host_u64 (hdr->frag1_wqe_ptr);
+      wqe_ptr2 = (u64 *) clib_net_to_host_u64 (*frag_ptr);
+
+      b1 = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+      b2 = (vlib_buffer_t *) ((u8 *) wqe_ptr2 - 128);
+
+      rxp_ptr1 = (oct_nix_rx_parse_t *) (wqe_ptr1 + 1);
+      rxp_ptr2 = (oct_nix_rx_parse_t *) (wqe_ptr2 + 1);
+
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr1) == 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr2) == 1);
+
+      b1->template = *bt;
+      b2->template = *bt;
+
+      *olen += rxp_ptr1->f.pkt_lenm1 + 1;
+      *olen += rxp_ptr2->f.pkt_lenm1 + 1;
+
+      *esp_len += rxp_ptr1->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+      *esp_len += rxp_ptr2->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+
+      b1->current_length = frag_size1;
+      b2->current_length = frag_size2;
+      b1->current_data = l2_l3_inner_hdr_size;
+      b2->current_data = l2_l3_inner_hdr_size;
+
+      b0->total_length_not_including_first_buffer += b1->current_length;
+      b0->total_length_not_including_first_buffer += b2->current_length;
+
+      b0->flags |= VLIB_BUFFER_NEXT_PRESENT;
+      b1->flags |= VLIB_BUFFER_NEXT_PRESENT;
+
+      b0->next_buffer = vlib_get_buffer_index (vm, b1);
+      b1->next_buffer = vlib_get_buffer_index (vm, b2);
+
+      return 3;
+    }
+
+  if (PREDICT_FALSE (frag_cnt == 4))
+    {
+      frag_ptr = (uint64_t *) (frag_info + 1);
+
+      frag_size1 = clib_net_to_host_u16 (frag_info->w1.frag_size1);
+      frag_size2 = clib_net_to_host_u16 (frag_info->w1.frag_size2);
+      frag_size3 = clib_net_to_host_u16 (frag_info->w1.frag_size3);
+
+      wqe_ptr1 = (u64 *) clib_net_to_host_u64 (hdr->frag1_wqe_ptr);
+      wqe_ptr2 = (u64 *) clib_net_to_host_u64 (*frag_ptr);
+      wqe_ptr3 = (u64 *) clib_net_to_host_u64 (*(frag_ptr + 1));
+
+      b1 = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+      b2 = (vlib_buffer_t *) ((u8 *) wqe_ptr2 - 128);
+      b3 = (vlib_buffer_t *) ((u8 *) wqe_ptr3 - 128);
+
+      rxp_ptr1 = (oct_nix_rx_parse_t *) (wqe_ptr1 + 1);
+      rxp_ptr2 = (oct_nix_rx_parse_t *) (wqe_ptr2 + 1);
+      rxp_ptr3 = (oct_nix_rx_parse_t *) (wqe_ptr3 + 1);
+
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr1) == 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr2) == 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr3) == 1);
+
+      b1->template = *bt;
+      b2->template = *bt;
+      b3->template = *bt;
+
+      *olen += rxp_ptr1->f.pkt_lenm1 + 1;
+      *olen += rxp_ptr2->f.pkt_lenm1 + 1;
+      *olen += rxp_ptr3->f.pkt_lenm1 + 1;
+
+      *esp_len += rxp_ptr1->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+      *esp_len += rxp_ptr2->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+      *esp_len += rxp_ptr3->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+
+      b1->current_length = frag_size1;
+      b2->current_length = frag_size2;
+      b3->current_length = frag_size3;
+      b1->current_data = l2_l3_inner_hdr_size;
+      b2->current_data = l2_l3_inner_hdr_size;
+      b3->current_data = l2_l3_inner_hdr_size;
+
+      b0->total_length_not_including_first_buffer += b1->current_length;
+      b0->total_length_not_including_first_buffer += b2->current_length;
+      b0->total_length_not_including_first_buffer += b3->current_length;
+
+      b0->flags |= VLIB_BUFFER_NEXT_PRESENT;
+      b1->flags |= VLIB_BUFFER_NEXT_PRESENT;
+      b2->flags |= VLIB_BUFFER_NEXT_PRESENT;
+
+      b0->next_buffer = vlib_get_buffer_index (vm, b1);
+      b1->next_buffer = vlib_get_buffer_index (vm, b2);
+      b2->next_buffer = vlib_get_buffer_index (vm, b3);
+
+      return 4;
+    }
+
+  return frag_cnt;
+}
+
+/*
+ * Reassemble failure cases. Read upto 4 fragments.
+ * Append them to the buffer list.
+ * Fragments which are further segmented are not
+ * supported currently.
+ * */
+static_always_inline u8
+oct_rx_ipsec_reassembly_failure (vlib_main_t *vm, vlib_buffer_template_t *bt,
+				 struct cpt_cn10k_parse_hdr_s *hdr,
+				 oct_nix_rx_cqe_desc_t *d,
+				 vlib_buffer_t **buffs, u16 *next,
+				 u16 *buffer_next_index, u32 *olen,
+				 u32 *esp_len, u32 l2_ol3_hdr_size,
+				 const u64 fp_flags)
+{
+  oct_nix_rx_parse_t *rxp_ptr2, *rxp_ptr3;
+  oct_nix_rx_parse_t *rxp_ptr, *rxp_ptr1;
+  struct cpt_frag_info_s *frag_info;
+  vlib_buffer_t *b1, *b2, *b3;
+  u32 l2_sz1, l2_sz2, l2_sz3;
+  u64 *wqe_ptr2, *wqe_ptr3;
+  u64 *wqe_ptr, *wqe_ptr1;
+  u16 rlen1, rlen2, rlen3;
+  uint64_t *frag_ptr;
+  uint32_t offset;
+  u16 next_index = next[*buffer_next_index - 1];
+  u8 frag_cnt;
+
+  wqe_ptr = (u64 *) clib_net_to_host_u64 (hdr->wqe_ptr);
+  rxp_ptr = (oct_nix_rx_parse_t *) (wqe_ptr + 1);
+  ASSERT (oct_rx_n_segs (vm, rxp_ptr) == 1);
+
+  frag_cnt = hdr->w0.num_frags;
+
+  /*
+   * fi_offset is 8B offset from cpt_parse_hdr_s + fi_pad to frag_info_s.
+   * fi_offset 0 indicates 256B.
+   */
+  offset = hdr->w2.fi_offset;
+  offset = (((offset - 1) & 0x1f) + 1) * 8;
+  frag_info = PLT_PTR_ADD (hdr, offset);
+
+  if (frag_cnt == 2)
+    {
+      wqe_ptr1 = (u64 *) clib_net_to_host_u64 (hdr->frag1_wqe_ptr);
+      b1 = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+      rxp_ptr1 = (oct_nix_rx_parse_t *) (wqe_ptr1 + 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr1) == 1);
+      rlen1 = ((*(wqe_ptr1 + 10)) >> 16) & 0xFFFF;
+
+      oct_rx_verify_vlib (vm, b1);
+      b1->template = *bt;
+
+      VLIB_BUFFER_TRACE_TRAJECTORY_INIT (b1);
+
+      l2_sz1 = rxp_ptr1->f.lcptr - rxp_ptr1->f.laptr;
+      b1->current_length = rlen1 + l2_sz1;
+      b1->current_data = 0;
+      if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+	clib_memcpy_fast (b1->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+
+      *olen += rxp_ptr1->f.pkt_lenm1 + 1;
+      *esp_len += rxp_ptr1->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+
+      buffs[*buffer_next_index] = b1;
+      next[*buffer_next_index] = next_index;
+      *buffer_next_index = *buffer_next_index + 1;
+
+      return 2;
+    }
+
+  if (PREDICT_FALSE (frag_cnt == 3))
+    {
+      frag_ptr = (uint64_t *) (frag_info + 1);
+
+      wqe_ptr1 = (u64 *) clib_net_to_host_u64 (hdr->frag1_wqe_ptr);
+      wqe_ptr2 = (u64 *) clib_net_to_host_u64 (*frag_ptr);
+
+      b1 = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+      b2 = (vlib_buffer_t *) ((u8 *) wqe_ptr2 - 128);
+
+      rxp_ptr1 = (oct_nix_rx_parse_t *) (wqe_ptr1 + 1);
+      rxp_ptr2 = (oct_nix_rx_parse_t *) (wqe_ptr2 + 1);
+
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr1) == 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr2) == 1);
+
+      rlen1 = ((*(wqe_ptr1 + 10)) >> 16) & 0xFFFF;
+      rlen2 = ((*(wqe_ptr2 + 10)) >> 16) & 0xFFFF;
+
+      oct_rx_verify_vlib (vm, b1);
+      oct_rx_verify_vlib (vm, b2);
+
+      b1->template = *bt;
+      b2->template = *bt;
+
+      VLIB_BUFFER_TRACE_TRAJECTORY_INIT (b1);
+      VLIB_BUFFER_TRACE_TRAJECTORY_INIT (b2);
+
+      l2_sz1 = rxp_ptr1->f.lcptr - rxp_ptr1->f.laptr;
+      l2_sz2 = rxp_ptr2->f.lcptr - rxp_ptr2->f.laptr;
+
+      b1->current_length = rlen1 + l2_sz1;
+      b2->current_length = rlen2 + l2_sz2;
+      b1->current_data = 0;
+      b2->current_data = 0;
+
+      if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+	{
+	  clib_memcpy_fast (b1->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+	  clib_memcpy_fast (b2->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+	}
+
+      *olen += rxp_ptr1->f.pkt_lenm1 + 1;
+      *esp_len += rxp_ptr1->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+      *olen += rxp_ptr2->f.pkt_lenm1 + 1;
+      *esp_len += rxp_ptr2->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+
+      buffs[*buffer_next_index] = b1;
+      buffs[*buffer_next_index + 1] = b2;
+      next[*buffer_next_index] = next_index;
+      next[*buffer_next_index + 1] = next_index;
+      *buffer_next_index = *buffer_next_index + 2;
+
+      return 3;
+    }
+
+  if (PREDICT_FALSE (frag_cnt == 4))
+    {
+      frag_ptr = (uint64_t *) (frag_info + 1);
+
+      wqe_ptr1 = (u64 *) clib_net_to_host_u64 (hdr->frag1_wqe_ptr);
+      wqe_ptr2 = (u64 *) clib_net_to_host_u64 (*frag_ptr);
+      wqe_ptr3 = (u64 *) clib_net_to_host_u64 (*(frag_ptr + 1));
+      b1 = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
+      b2 = (vlib_buffer_t *) ((u8 *) wqe_ptr2 - 128);
+      b3 = (vlib_buffer_t *) ((u8 *) wqe_ptr3 - 128);
+      rxp_ptr1 = (oct_nix_rx_parse_t *) (wqe_ptr1 + 1);
+      rxp_ptr2 = (oct_nix_rx_parse_t *) (wqe_ptr2 + 1);
+      rxp_ptr3 = (oct_nix_rx_parse_t *) (wqe_ptr3 + 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr1) == 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr2) == 1);
+      ASSERT (oct_rx_n_segs (vm, rxp_ptr3) == 1);
+      rlen1 = ((*(wqe_ptr1 + 10)) >> 16) & 0xFFFF;
+      rlen2 = ((*(wqe_ptr2 + 10)) >> 16) & 0xFFFF;
+      rlen3 = ((*(wqe_ptr3 + 10)) >> 16) & 0xFFFF;
+
+      oct_rx_verify_vlib (vm, b1);
+      oct_rx_verify_vlib (vm, b2);
+      oct_rx_verify_vlib (vm, b3);
+
+      b1->template = *bt;
+      b2->template = *bt;
+      b3->template = *bt;
+
+      VLIB_BUFFER_TRACE_TRAJECTORY_INIT (b1);
+      VLIB_BUFFER_TRACE_TRAJECTORY_INIT (b2);
+      VLIB_BUFFER_TRACE_TRAJECTORY_INIT (b3);
+
+      l2_sz1 = rxp_ptr1->f.lcptr - rxp_ptr1->f.laptr;
+      l2_sz2 = rxp_ptr2->f.lcptr - rxp_ptr2->f.laptr;
+      l2_sz3 = rxp_ptr3->f.lcptr - rxp_ptr3->f.laptr;
+
+      b1->current_length = rlen1 + l2_sz1;
+      b2->current_length = rlen2 + l2_sz2;
+      b3->current_length = rlen3 + l2_sz3;
+      b1->current_data = 0;
+      b2->current_data = 0;
+      b3->current_data = 0;
+
+      if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+	{
+	  clib_memcpy_fast (b1->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+	  clib_memcpy_fast (b2->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+	  clib_memcpy_fast (b3->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+	}
+
+      *olen += rxp_ptr1->f.pkt_lenm1 + 1;
+      *olen += rxp_ptr2->f.pkt_lenm1 + 1;
+      *olen += rxp_ptr3->f.pkt_lenm1 + 1;
+      *esp_len += rxp_ptr1->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+      *esp_len += rxp_ptr2->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+      *esp_len += rxp_ptr3->f.pkt_lenm1 + 1 - l2_ol3_hdr_size;
+
+      buffs[*buffer_next_index] = b1;
+      buffs[*buffer_next_index + 1] = b2;
+      buffs[*buffer_next_index + 2] = b3;
+      next[*buffer_next_index] = next_index;
+      next[*buffer_next_index + 1] = next_index;
+      next[*buffer_next_index + 2] = next_index;
+      *buffer_next_index = *buffer_next_index + 3;
+
+      return 4;
+    }
+
+  return frag_cnt;
+}
+
+static_always_inline u8
+oct_rx_ipsec_reassembly (vlib_main_t *vm, vlib_buffer_template_t *bt,
+			 struct cpt_cn10k_parse_hdr_s *cpt_hdr,
+			 oct_nix_rx_cqe_desc_t *d, vlib_buffer_t *b,
+			 vlib_buffer_t **buf, u16 *next,
+			 u16 *buffer_next_index, u32 *olen, u32 *esp_len,
+			 u32 l2_ol3_hdr_size, const u64 fp_flags)
+{
+  if ((cpt_hdr->w0.num_frags) && !(cpt_hdr->w0.reas_sts))
+    return oct_rx_ipsec_reassembly_success (vm, bt, cpt_hdr, d, b, olen,
+					    esp_len, l2_ol3_hdr_size);
+  else if (cpt_hdr->w0.reas_sts)
+    return oct_rx_ipsec_reassembly_failure (vm, bt, cpt_hdr, d, buf, next,
+					    buffer_next_index, olen, esp_len,
+					    l2_ol3_hdr_size, fp_flags);
+  else
+    return 1;
 }
 
 static_always_inline u32
@@ -524,17 +935,18 @@ done:
 }
 
 static_always_inline u32
-oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
-			       oct_nix_rx_cqe_desc_t *d, vlib_buffer_t **b,
-			       oct_rx_node_ctx_t *ctx,
-			       vlib_buffer_template_t *bt,
-			       struct cpt_cn10k_parse_hdr_s *cpt_hdr,
-			       vlib_buffer_t **buffs, u32 *err_flags)
+oct_rx_inl_ipsec_vlib_from_cq (
+  vlib_main_t *vm, vlib_node_runtime_t *node, oct_nix_rx_cqe_desc_t *d,
+  vlib_buffer_t **b, oct_rx_node_ctx_t *ctx, vlib_buffer_template_t *bt,
+  struct cpt_cn10k_parse_hdr_s *cpt_hdr, vlib_buffer_t **buffs, u32 *err_flags,
+  u16 *next, u16 *buffer_next_index, const u64 fp_flags)
 {
-  union nix_rx_parse_u *orig_rxp;
+  union nix_rx_parse_u *orig_rxp, *rxp;
   u32 is_fail, olen, esp_sz, l2_ol3_sz, idx;
   u64 *wqe_ptr;
+  u8 frag_cnt;
 
+  rxp = &d->parse.f;
   cpt_hdr = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) d) + 9);
   wqe_ptr = (u64 *) clib_net_to_host_u64 (cpt_hdr->wqe_ptr);
 
@@ -543,7 +955,6 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
   l2_ol3_sz = orig_rxp->leptr - orig_rxp->laptr;
   olen = orig_rxp->pkt_lenm1 + 1;
   esp_sz = olen - l2_ol3_sz;
-  ctx->to_next[0] = vlib_get_buffer_index (vm, b[0]);
   b[0]->template = *bt;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
   *err_flags |= ((d[0].parse.w[0] >> 20) & 0xFFF);
@@ -551,24 +962,36 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 
   is_fail = !oct_ipsec_is_inl_op_success (cpt_hdr);
 
+  buffs[*buffer_next_index] = b[0];
   if (PREDICT_FALSE (is_fail))
     {
       b[0]->current_length = olen;
-      ctx->next[0] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+      clib_memcpy_fast (rxp, orig_rxp, sizeof (oct_nix_rx_parse_t));
+      next[*buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+      *buffer_next_index = *buffer_next_index + 1;
       oct_rx_ipsec_set_error (vm, node, b[0], cpt_hdr->w3.uc_ccode);
+      frag_cnt = 1;
     }
   else
     {
-      ctx->next[0] = ctx->next_index;
+      next[*buffer_next_index] = ctx->next_index;
+      *buffer_next_index = *buffer_next_index + 1;
       b[0]->current_length =
 	oct_get_len_from_meta (cpt_hdr, d[0].parse.w[0], d[0].parse.w[4]);
+
+      frag_cnt = oct_rx_ipsec_reassembly (vm, bt, cpt_hdr, &d[0], b[0], buffs,
+					  next, buffer_next_index, &olen,
+					  &esp_sz, l2_ol3_sz, fp_flags);
+
       idx = cpt_hdr->w0.cookie;
-      oct_rx_ipsec_update_counters (vm, b[0], esp_sz, 1, idx);
+      oct_rx_ipsec_update_counters (vm, b[0], esp_sz, frag_cnt, idx);
       oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp, bt, b[0]);
     }
   ctx->n_rx_bytes += olen;
+  ctx->n_segs += frag_cnt;
 
-  buffs[0] = b[0];
+  if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+    clib_memcpy_fast (b[0]->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
 
   return 0;
 }
@@ -576,12 +999,11 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 static_always_inline u32
 oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
 		     vlib_buffer_t **b, oct_rx_node_ctx_t *ctx,
-		     vlib_buffer_template_t *bt, u64 meta_aura_handle,
-		     vlib_buffer_t **buffs, u32 *err_flags)
+		     vlib_buffer_template_t *bt, vlib_buffer_t **buffs,
+		     u32 *err_flags, u16 *next, u16 *buffer_next_index,
+		     const u64 fp_flags)
 {
   b[0] = (vlib_buffer_t *) d->segs0[0] - 1;
-  ctx->to_next[0] = vlib_get_buffer_index (vm, b[0]);
-  ctx->next[0] = ctx->next_index;
   b[0]->template = *bt;
   ctx->n_rx_bytes += b[0]->current_length = d[0].sg0.seg1_size;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
@@ -589,7 +1011,9 @@ oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
   ctx->n_segs += 1;
   if (d[0].sg0.segs > 1)
     oct_rx_attach_tail (vm, ctx, bt, b[0], d + 0);
-  buffs[0] = b[0];
+  buffs[*buffer_next_index] = b[0];
+  next[*buffer_next_index] = ctx->next_index;
+  *buffer_next_index = *buffer_next_index + 1;
   return 0;
 }
 
@@ -625,7 +1049,7 @@ oct_rx_flush_meta_burst (u16 lmt_id, u64 data, u16 lnum, uintptr_t aura_handle)
 static_always_inline u32
 oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      oct_rx_node_ctx_t *ctx, vnet_dev_rx_queue_t *rxq, u32 n,
-	      vlib_buffer_t **buffs)
+	      vlib_buffer_t **buffers, const u64 fp_flags)
 {
   oct_rxq_t *crq = vnet_dev_get_rx_queue_data (rxq);
   vlib_buffer_template_t bt = rxq->buffer_template;
@@ -635,6 +1059,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   oct_nix_rx_cqe_desc_t *d = ctx->next_desc;
   struct cpt_cn10k_parse_hdr_s *cpt_hdr0, *cpt_hdr1;
   struct cpt_cn10k_parse_hdr_s *cpt_hdr2, *cpt_hdr3;
+  union nix_rx_parse_u *rxp0, *rxp1;
+  union nix_rx_parse_u *rxp2, *rxp3;
   union nix_rx_parse_u *orig_rxp0, *orig_rxp1;
   union nix_rx_parse_u *orig_rxp2, *orig_rxp3;
   u8 is_b0_from_cpt, is_b1_from_cpt;
@@ -647,11 +1073,16 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 l2_ol3_sz0, l2_ol3_sz1, l2_ol3_sz2, l2_ol3_sz3;
   u32 idx0, idx1, idx2, idx3;
   vlib_buffer_t *b[4];
+  vlib_buffer_t **buffs = buffers + ctx->buffer_start_index;
+  u16 *next = ctx->next + ctx->buffer_start_index;
+  u8 frag_cnt0 = 1, frag_cnt1 = 1;
+  u8 frag_cnt2 = 1, frag_cnt3 = 1;
   u8 n_from_cpt, n_cpt_err;
   u64 meta_aura_handle;
   u64 lbase = crq->lmt_base_addr;
   u8 loff = 0, lnum = 0, shft = 0;
-  u16 lmt_id;
+  u16 lmt_id, buffer_next_index = 0;
+  u16 cqe_desc_bytes = sizeof (oct_nix_rx_cqe_desc_t);
   u64 laddr;
 
   meta_aura_handle = crq->rq.meta_aura_handle;
@@ -659,8 +1090,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   laddr = lbase;
   laddr += 8;
 
-  for (n_left = n; n_left >= 8;
-       d += 4, n_left -= 4, ctx->to_next += 4, ctx->next += 4)
+  for (n_left = n; n_left >= 8; d += 4, n_left -= 4)
     {
       u32 segs = 0;
       clib_prefetch_store (oct_seg_to_bp (d[4].segs0[0]));
@@ -672,6 +1102,11 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       b[2] = oct_seg_to_bp (d[2].segs0[0]);
       b[3] = oct_seg_to_bp (d[3].segs0[0]);
 
+      rxp0 = &d[0].parse.f;
+      rxp1 = &d[1].parse.f;
+      rxp2 = &d[2].parse.f;
+      rxp3 = &d[3].parse.f;
+
       is_b0_from_cpt = oct_is_packet_from_cpt (&d[0].parse.f);
       is_b1_from_cpt = oct_is_packet_from_cpt (&d[1].parse.f);
       is_b2_from_cpt = oct_is_packet_from_cpt (&d[2].parse.f);
@@ -681,15 +1116,10 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	is_b0_from_cpt + is_b1_from_cpt + is_b2_from_cpt + is_b3_from_cpt;
       if (n_from_cpt == 0)
 	{
-	  ctx->to_next[0] = vlib_get_buffer_index (vm, b[0]);
-	  ctx->to_next[1] = vlib_get_buffer_index (vm, b[1]);
-	  ctx->to_next[2] = vlib_get_buffer_index (vm, b[2]);
-	  ctx->to_next[3] = vlib_get_buffer_index (vm, b[3]);
-
-	  ctx->next[0] = ctx->next_index;
-	  ctx->next[1] = ctx->next_index;
-	  ctx->next[2] = ctx->next_index;
-	  ctx->next[3] = ctx->next_index;
+	  next[buffer_next_index + 0] = ctx->next_index;
+	  next[buffer_next_index + 1] = ctx->next_index;
+	  next[buffer_next_index + 2] = ctx->next_index;
+	  next[buffer_next_index + 3] = ctx->next_index;
 
 	  b[0]->template = bt;
 	  b[1]->template = bt;
@@ -714,6 +1144,14 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  err_flags |=
 	    b0_err_flags | b1_err_flags | b2_err_flags | b3_err_flags;
 
+	  if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+	    {
+	      clib_memcpy_fast (b[0]->pre_data, &d[0], cqe_desc_bytes);
+	      clib_memcpy_fast (b[1]->pre_data, &d[1], cqe_desc_bytes);
+	      clib_memcpy_fast (b[2]->pre_data, &d[2], cqe_desc_bytes);
+	      clib_memcpy_fast (b[3]->pre_data, &d[3], cqe_desc_bytes);
+	    }
+
 	  ctx->n_segs += 4;
 	  segs = d[0].sg0.segs + d[1].sg0.segs + d[2].sg0.segs + d[3].sg0.segs;
 
@@ -725,10 +1163,12 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      oct_rx_attach_tail (vm, ctx, &bt, b[3], d + 3);
 	    }
 
-	  buffs[0] = b[0];
-	  buffs[1] = b[1];
-	  buffs[2] = b[2];
-	  buffs[3] = b[3];
+	  buffs[buffer_next_index + 0] = b[0];
+	  buffs[buffer_next_index + 1] = b[1];
+	  buffs[buffer_next_index + 2] = b[2];
+	  buffs[buffer_next_index + 3] = b[3];
+
+	  buffer_next_index += 4;
 	}
       else if (n_from_cpt == 4)
 	{
@@ -768,11 +1208,6 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  esp_sz2 = olen2 - l2_ol3_sz2;
 	  esp_sz3 = olen3 - l2_ol3_sz3;
 
-	  ctx->to_next[0] = vlib_get_buffer_index (vm, b[0]);
-	  ctx->to_next[1] = vlib_get_buffer_index (vm, b[1]);
-	  ctx->to_next[2] = vlib_get_buffer_index (vm, b[2]);
-	  ctx->to_next[3] = vlib_get_buffer_index (vm, b[3]);
-
 	  b[0]->template = bt;
 	  b[1]->template = bt;
 	  b[2]->template = bt;
@@ -786,11 +1221,6 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 
 	  if (PREDICT_TRUE (!n_cpt_err))
 	    {
-	      ctx->next[0] = ctx->next_index;
-	      ctx->next[1] = ctx->next_index;
-	      ctx->next[2] = ctx->next_index;
-	      ctx->next[3] = ctx->next_index;
-
 	      b[0]->current_length = oct_get_len_from_meta (
 		cpt_hdr0, d[0].parse.w[0], d[0].parse.w[4]);
 	      b[1]->current_length = oct_get_len_from_meta (
@@ -800,14 +1230,43 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      b[3]->current_length = oct_get_len_from_meta (
 		cpt_hdr3, d[3].parse.w[0], d[3].parse.w[4]);
 
+	      next[buffer_next_index] = ctx->next_index;
+	      buffs[buffer_next_index] = b[0];
+	      buffer_next_index += 1;
+	      frag_cnt0 = oct_rx_ipsec_reassembly (
+		vm, &bt, cpt_hdr0, &d[0], b[0], buffs, next,
+		&buffer_next_index, &olen0, &esp_sz0, l2_ol3_sz0, fp_flags);
+
+	      buffs[buffer_next_index] = b[1];
+	      next[buffer_next_index] = ctx->next_index;
+	      buffer_next_index += 1;
+	      frag_cnt1 = oct_rx_ipsec_reassembly (
+		vm, &bt, cpt_hdr1, &d[1], b[1], buffs, next,
+		&buffer_next_index, &olen1, &esp_sz1, l2_ol3_sz1, fp_flags);
+
+	      buffs[buffer_next_index] = b[2];
+	      next[buffer_next_index] = ctx->next_index;
+	      buffer_next_index += 1;
+	      frag_cnt2 = oct_rx_ipsec_reassembly (
+		vm, &bt, cpt_hdr2, &d[2], b[2], buffs, next,
+		&buffer_next_index, &olen2, &esp_sz2, l2_ol3_sz2, fp_flags);
+
+	      buffs[buffer_next_index] = b[3];
+	      next[buffer_next_index] = ctx->next_index;
+	      buffer_next_index += 1;
+	      frag_cnt3 = oct_rx_ipsec_reassembly (
+		vm, &bt, cpt_hdr3, &d[3], b[3], buffs, next,
+		&buffer_next_index, &olen3, &esp_sz3, l2_ol3_sz3, fp_flags);
+
 	      idx0 = cpt_hdr0->w0.cookie;
 	      idx1 = cpt_hdr1->w0.cookie;
 	      idx2 = cpt_hdr2->w0.cookie;
 	      idx3 = cpt_hdr3->w0.cookie;
 
 	      oct_rx_ipsec_update_counters_x4 (
-		vm, b[0], esp_sz0, 1, idx0, b[1], esp_sz1, 1, idx1, b[2],
-		esp_sz2, 1, idx2, b[3], esp_sz3, 1, idx3);
+		vm, b[0], esp_sz0, frag_cnt0, idx0, b[1], esp_sz1, frag_cnt1,
+		idx1, b[2], esp_sz2, frag_cnt2, idx2, b[3], esp_sz3, frag_cnt3,
+		idx3);
 
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
@@ -816,75 +1275,127 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	    }
 	  else
 	    {
+	      buffs[buffer_next_index] = b[0];
+
 	      if (is_fail0)
 		{
 		  b[0]->current_length = olen0;
-		  ctx->next[0] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  clib_memcpy_fast (rxp0, orig_rxp0,
+				    sizeof (oct_nix_rx_parse_t));
+		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  buffer_next_index += 1;
 		  oct_rx_ipsec_set_error (vm, node, b[0],
 					  cpt_hdr0->w3.uc_ccode);
+		  frag_cnt0 = 1;
 		}
 	      else
 		{
-		  ctx->next[0] = ctx->next_index;
+		  next[buffer_next_index] = ctx->next_index;
+		  buffer_next_index += 1;
 		  b[0]->current_length = oct_get_len_from_meta (
 		    cpt_hdr0, d[0].parse.w[0], d[0].parse.w[4]);
+
+		  frag_cnt0 = oct_rx_ipsec_reassembly (
+		    vm, &bt, cpt_hdr0, &d[0], b[0], buffs, next,
+		    &buffer_next_index, &olen0, &esp_sz0, l2_ol3_sz0,
+		    fp_flags);
+
 		  idx0 = cpt_hdr0->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[0], esp_sz0, 1, idx0);
+		  oct_rx_ipsec_update_counters (vm, b[0], esp_sz0, frag_cnt0,
+						idx0);
 		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
 		}
+
+	      buffs[buffer_next_index] = b[1];
 
 	      if (is_fail1)
 		{
 		  b[1]->current_length = olen1;
-		  ctx->next[1] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  clib_memcpy_fast (rxp1, orig_rxp1,
+				    sizeof (oct_nix_rx_parse_t));
+		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  buffer_next_index += 1;
 		  oct_rx_ipsec_set_error (vm, node, b[1],
 					  cpt_hdr1->w3.uc_ccode);
+		  frag_cnt1 = 1;
 		}
 	      else
 		{
-		  ctx->next[1] = ctx->next_index;
+		  next[buffer_next_index] = ctx->next_index;
+		  buffer_next_index += 1;
 		  b[1]->current_length = oct_get_len_from_meta (
 		    cpt_hdr1, d[1].parse.w[0], d[1].parse.w[4]);
+		  frag_cnt1 = oct_rx_ipsec_reassembly (
+		    vm, &bt, cpt_hdr1, &d[1], b[1], buffs, next,
+		    &buffer_next_index, &olen1, &esp_sz1, l2_ol3_sz1,
+		    fp_flags);
 		  idx1 = cpt_hdr1->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[1], esp_sz1, 1, idx1);
+		  oct_rx_ipsec_update_counters (vm, b[1], esp_sz1, frag_cnt1,
+						idx1);
 		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
 		}
+
+	      buffs[buffer_next_index] = b[2];
 
 	      if (is_fail2)
 		{
 		  b[2]->current_length = olen2;
-		  ctx->next[2] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  clib_memcpy_fast (rxp2, orig_rxp2,
+				    sizeof (oct_nix_rx_parse_t));
+		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  buffer_next_index += 1;
 		  oct_rx_ipsec_set_error (vm, node, b[2],
 					  cpt_hdr2->w3.uc_ccode);
+		  frag_cnt2 = 1;
 		}
 	      else
 		{
-		  ctx->next[2] = ctx->next_index;
+		  next[buffer_next_index] = ctx->next_index;
+		  buffer_next_index += 1;
 		  b[2]->current_length = oct_get_len_from_meta (
 		    cpt_hdr2, d[2].parse.w[0], d[2].parse.w[4]);
+		  frag_cnt2 = oct_rx_ipsec_reassembly (
+		    vm, &bt, cpt_hdr2, &d[2], b[2], buffs, next,
+		    &buffer_next_index, &olen2, &esp_sz2, l2_ol3_sz2,
+		    fp_flags);
 		  idx2 = cpt_hdr2->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[2], esp_sz2, 1, idx2);
+		  oct_rx_ipsec_update_counters (vm, b[2], esp_sz2, frag_cnt2,
+						idx2);
 		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp2, &bt, b[2]);
 		}
+
+	      buffs[buffer_next_index] = b[3];
 
 	      if (is_fail3)
 		{
 		  b[3]->current_length = olen3;
-		  ctx->next[3] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  clib_memcpy_fast (rxp3, orig_rxp3,
+				    sizeof (oct_nix_rx_parse_t));
+		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+		  buffer_next_index += 1;
 		  oct_rx_ipsec_set_error (vm, node, b[3],
 					  cpt_hdr3->w3.uc_ccode);
+		  frag_cnt3 = 1;
 		}
 	      else
 		{
-		  ctx->next[3] = ctx->next_index;
+		  next[buffer_next_index] = ctx->next_index;
+		  buffer_next_index += 1;
 		  b[3]->current_length = oct_get_len_from_meta (
 		    cpt_hdr3, d[3].parse.w[0], d[3].parse.w[4]);
+
+		  frag_cnt3 = oct_rx_ipsec_reassembly (
+		    vm, &bt, cpt_hdr3, &d[3], b[3], buffs, next,
+		    &buffer_next_index, &olen3, &esp_sz3, l2_ol3_sz3,
+		    fp_flags);
 		  idx3 = cpt_hdr3->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[3], esp_sz3, 1, idx3);
+		  oct_rx_ipsec_update_counters (vm, b[3], esp_sz3, frag_cnt3,
+						idx3);
 		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp3, &bt, b[3]);
 		}
 	    }
 	  ctx->n_rx_bytes += olen0 + olen1 + olen2 + olen3;
+	  ctx->n_segs += frag_cnt0 + frag_cnt1 + frag_cnt2 + frag_cnt3;
 
 	  b[0]->flow_id = d[0].parse.w[3] >> 48;
 	  b[1]->flow_id = d[1].parse.w[3] >> 48;
@@ -899,17 +1410,18 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  err_flags |=
 	    b0_err_flags | b1_err_flags | b2_err_flags | b3_err_flags;
 
-	  ctx->n_segs += 4;
-
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr2, laddr, &loff);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr3, laddr, &loff);
 
-	  buffs[0] = b[0];
-	  buffs[1] = b[1];
-	  buffs[2] = b[2];
-	  buffs[3] = b[3];
+	  if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+	    {
+	      clib_memcpy_fast (b[0]->pre_data, &d[0], cqe_desc_bytes);
+	      clib_memcpy_fast (b[1]->pre_data, &d[1], cqe_desc_bytes);
+	      clib_memcpy_fast (b[2]->pre_data, &d[2], cqe_desc_bytes);
+	      clib_memcpy_fast (b[3]->pre_data, &d[3], cqe_desc_bytes);
+	    }
 	}
       else
 	{
@@ -919,48 +1431,51 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      cpt_hdr0 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
-					     cpt_hdr0, &buffs[0], &err_flags);
+					     cpt_hdr0, buffs, &err_flags, next,
+					     &buffer_next_index, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, meta_aura_handle,
-				 &buffs[0], &err_flags);
+	    oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, buffs, &err_flags,
+				 next, &buffer_next_index, fp_flags);
 
 	  if (is_b1_from_cpt)
 	    {
 	      cpt_hdr1 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[1], &b[1], ctx, &bt,
-					     cpt_hdr1, &buffs[1], &err_flags);
+					     cpt_hdr1, buffs, &err_flags, next,
+					     &buffer_next_index, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[1], &b[1], ctx, &bt, meta_aura_handle,
-				 &buffs[1], &err_flags);
+	    oct_rx_vlib_from_cq (vm, &d[1], &b[1], ctx, &bt, buffs, &err_flags,
+				 next, &buffer_next_index, fp_flags);
 	  if (is_b2_from_cpt)
 	    {
 	      cpt_hdr2 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[2], &b[2], ctx, &bt,
-					     cpt_hdr2, &buffs[2], &err_flags);
+					     cpt_hdr2, buffs, &err_flags, next,
+					     &buffer_next_index, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr2, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[2], &b[2], ctx, &bt, meta_aura_handle,
-				 &buffs[2], &err_flags);
+	    oct_rx_vlib_from_cq (vm, &d[2], &b[2], ctx, &bt, buffs, &err_flags,
+				 next, &buffer_next_index, fp_flags);
 	  if (is_b3_from_cpt)
 	    {
 	      cpt_hdr3 =
 		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[3], &b[3], ctx, &bt,
-					     cpt_hdr3, &buffs[3], &err_flags);
+					     cpt_hdr3, buffs, &err_flags, next,
+					     &buffer_next_index, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr3, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[3], &b[3], ctx, &bt, meta_aura_handle,
-				 &buffs[3], &err_flags);
+	    oct_rx_vlib_from_cq (vm, &d[3], &b[3], ctx, &bt, buffs, &err_flags,
+				 next, &buffer_next_index, fp_flags);
 	}
-      buffs += 4;
       /* Check if lmtline border is crossed and adjust lnum */
       if (loff > 15)
 	{
@@ -1026,21 +1541,21 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       laddr = (uintptr_t) LMT_OFF (lbase, lnum, 8);
     }
 
-  for (; n_left; d += 1, n_left -= 1, ctx->to_next += 1, ctx->next += 1)
+  for (; n_left; d += 1, n_left -= 1)
     {
       is_b0_from_cpt = oct_is_packet_from_cpt (&d[0].parse.f);
       if (is_b0_from_cpt)
 	{
 	  cpt_hdr0 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
 	  oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
-					 cpt_hdr0, buffs, &err_flags);
+					 cpt_hdr0, buffs, &err_flags, next,
+					 &buffer_next_index, fp_flags);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	}
       else
 
-	oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, meta_aura_handle,
-			     buffs, &err_flags);
-      buffs += 1;
+	oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, buffs, &err_flags,
+			     next, &buffer_next_index, fp_flags);
     }
   if (loff)
     {
@@ -1059,12 +1574,13 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
     }
 
   plt_write64 ((crq->cq.wdata | n), crq->cq.door);
-  ctx->n_rx_pkts += n;
-  ctx->n_left_to_next -= n;
+  ctx->n_rx_pkts += buffer_next_index;
+  ctx->n_left_to_next -= buffer_next_index;
+  ctx->buffer_start_index += buffer_next_index;
   if (err_flags)
     ctx->parse_w0_or = (err_flags << 20);
 
-  return n;
+  return buffer_next_index;
 }
 
 #ifdef PLATFORM_OCTEON9
@@ -1215,7 +1731,7 @@ oct_rx_trace (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  oct_rx_trace_t *tr = vlib_add_trace (vm, node, b, sizeof (*tr));
 	  tr->next_index = ctx->next_index;
 	  tr->sw_if_index = ctx->sw_if_index;
-	  tr->desc = d[i];
+	  tr->desc = *(oct_nix_rx_cqe_desc_t *) b->pre_data;
 	  ctx->n_traced++;
 	}
       i++;
@@ -1254,14 +1770,14 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   vnet_main_t *vnm = vnet_get_main ();
   u32 thr_idx = vlib_get_thread_index ();
   oct_rxq_t *crq = vnet_dev_get_rx_queue_data (rxq);
-  u32 n_desc, head, n, n_enq;
+  u32 n_desc, head, n, n_enq, n_processed = 0;
   u32 cq_size = crq->cq.nb_desc;
   u32 cq_mask = crq->cq.qmask;
   oct_nix_rx_cqe_desc_t *descs = crq->cq.desc_base;
   oct_nix_lf_cq_op_status_t status;
-  u32 to_next[VLIB_FRAME_SIZE];
-  u16 next[VLIB_FRAME_SIZE];
-  vlib_buffer_t *buffs[256];
+  u32 to_next[OCT_FRAME_SIZE];
+  u16 next[OCT_FRAME_SIZE];
+  vlib_buffer_t *buffs[OCT_FRAME_SIZE];
   u8 is_single_next = 1;
   oct_rx_node_ctx_t _ctx = {
     .next_index = rxq->next_index,
@@ -1269,7 +1785,8 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
     .hw_if_index = port->intf.hw_if_index,
     .to_next = to_next,
     .next = next,
-    .n_left_to_next = VLIB_FRAME_SIZE,
+    .n_left_to_next = OCT_FRAME_SIZE,
+    .buffer_start_index = 0,
   }, *ctx = &_ctx;
 
   /* get head and tail from NIX_LF_CQ_OP_STATUS */
@@ -1288,11 +1805,16 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   while (1)
     {
       ctx->next_desc = descs + head;
-      n = clib_min (cq_size - head, clib_min (n_desc, ctx->n_left_to_next));
-      n = oct_rx_batch (vm, node, ctx, rxq, n, buffs);
-      oct_rx_trace (vm, node, ctx, descs + head, n, buffs);
+      n =
+	clib_min (cq_size - head, clib_min (n_desc, ctx->n_left_to_next / 4));
 
-      if (ctx->n_left_to_next == 0)
+      if (PREDICT_TRUE (ctx->trace_count == 0))
+	n_processed += oct_rx_batch (vm, node, ctx, rxq, n, buffs, 0);
+      else
+	n_processed +=
+	  oct_rx_batch (vm, node, ctx, rxq, n, buffs, OCT_FP_FLAG_TRACE_EN);
+
+      if (n_processed >= 256)
 	break;
 
       status.as_u64 = roc_atomic64_add_sync (crq->cq.wdata, crq->cq.status);
@@ -1304,8 +1826,13 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       if (n_desc == 0)
 	break;
     }
-  ctx->to_next = to_next;
+
+  vlib_get_buffer_indices_with_offset (vm, (void **) buffs, ctx->to_next,
+				       n_processed, 0);
+
   ctx->next = next;
+
+  oct_rx_trace (vm, node, ctx, descs + head, n_processed, buffs);
 
   oct_rx_enq_to_next (vm, node, ctx, &is_single_next);
 
