@@ -120,9 +120,15 @@ static vnet_dev_arg_t oct_dev_args[] = {
   {
     .id = OCT_DEV_ARG_CRYPTO_N_DESC,
     .name = "n_desc",
-    .desc = "number of cpt descriptors",
+    .desc = "number of cpt descriptors, applicable to cpt devices only",
     .type = VNET_DEV_ARG_TYPE_UINT32,
-    .default_val.uint32 = 16384,
+    .default_val.uint32 = OCT_CPT_LF_DEF_NB_DESC,
+  },
+  {
+    .id = OCT_DEV_ARG_END,
+    .name = "end",
+    .desc = "Argument end",
+    .type = VNET_DEV_ARG_END,
   },
 };
 
@@ -214,6 +220,10 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     .pci_dev = &cd->plt_pci_dev,
     .hw_vlan_ins = true,
   };
+
+  if (roc_feature_nix_has_own_meta_aura () &&
+      !roc_feature_nix_has_second_pass_drop ())
+    cd->nix->local_meta_aura_ena = true;
 
   if ((rrv = roc_nix_dev_init (cd->nix)))
     return cnx_return_roc_err (dev, rrv, "roc_nix_dev_init");
