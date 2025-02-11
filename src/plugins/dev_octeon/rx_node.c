@@ -33,7 +33,8 @@ oct_seg_to_bp (void *p)
 }
 
 static_always_inline void
-oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx, vlib_buffer_t *h,
+oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx,
+		    vlib_buffer_template_t *bt, vlib_buffer_t *h,
 		    oct_nix_rx_cqe_desc_t *d)
 {
   u32 tail_sz = 0, n_tail_segs = 0;
@@ -44,6 +45,7 @@ oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx, vlib_buffer_t *h,
     return;
 
   b = oct_seg_to_bp (d->segs0[1]);
+  b->template = *bt;
   h->next_buffer = vlib_get_buffer_index (vm, b);
   tail_sz += b->current_length = d->sg0.seg2_size;
   n_tail_segs++;
@@ -54,6 +56,7 @@ oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx, vlib_buffer_t *h,
   p = b;
   p->flags = VLIB_BUFFER_NEXT_PRESENT;
   b = oct_seg_to_bp (d->segs0[2]);
+  b->template = *bt;
   p->next_buffer = vlib_get_buffer_index (vm, b);
   tail_sz += b->current_length = d->sg0.seg3_size;
   n_tail_segs++;
@@ -68,6 +71,7 @@ oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx, vlib_buffer_t *h,
   p = b;
   p->flags = VLIB_BUFFER_NEXT_PRESENT;
   b = oct_seg_to_bp (d->segs1[0]);
+  b->template = *bt;
   p->next_buffer = vlib_get_buffer_index (vm, b);
   tail_sz += b->current_length = d->sg1.seg1_size;
   n_tail_segs++;
@@ -78,6 +82,7 @@ oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx, vlib_buffer_t *h,
   p = b;
   p->flags = VLIB_BUFFER_NEXT_PRESENT;
   b = oct_seg_to_bp (d->segs1[1]);
+  b->template = *bt;
   p->next_buffer = vlib_get_buffer_index (vm, b);
   tail_sz += b->current_length = d->sg1.seg2_size;
   n_tail_segs++;
@@ -88,6 +93,7 @@ oct_rx_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx, vlib_buffer_t *h,
   p = b;
   p->flags = VLIB_BUFFER_NEXT_PRESENT;
   b = oct_seg_to_bp (d->segs1[2]);
+  b->template = *bt;
   p->next_buffer = vlib_get_buffer_index (vm, b);
   tail_sz += b->current_length = d->sg1.seg3_size;
   n_tail_segs++;
@@ -411,8 +417,9 @@ oct_rx_ipsec_set_error (vlib_main_t *vm, vlib_node_runtime_t *node,
 #define OCT_SEG_LEN_SHIFT 16
 #define OCT_SEG_LEN_MASK  0xFFFF
 
-static_always_inline u32
-oct_rx_ipsec_attach_tail (vlib_main_t *vm, const union nix_rx_parse_u *rxp0,
+static_always_inline void
+oct_rx_ipsec_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx,
+			  const union nix_rx_parse_u *rxp0,
 			  vlib_buffer_template_t *bt, vlib_buffer_t *b)
 {
   u32 n_words, n_words_processed, desc_sizem1;
@@ -421,13 +428,13 @@ oct_rx_ipsec_attach_tail (vlib_main_t *vm, const union nix_rx_parse_u *rxp0,
   u32 current_desc, bi, sg_len;
   vlib_buffer_t *buf = b;
   struct nix_rx_sg_s *sg;
-  u32 total_segs = 1;
+  u32 total_segs = 0;
   u64 seg_len;
   i64 len;
 
   desc_sizem1 = rxp0->desc_sizem1;
   if (desc_sizem1 == 0)
-    return total_segs;
+    return;
 
   n_words = desc_sizem1 << 1;
   n_sg_desc = (n_words / 4) + 1;
@@ -484,7 +491,7 @@ oct_rx_ipsec_attach_tail (vlib_main_t *vm, const union nix_rx_parse_u *rxp0,
 	    {
 	      vlib_buffer_free_no_next (vm, &bi, 1);
 	      total_segs++;
-	      return total_segs;
+	      goto done;
 	    }
 
 	  last_buf->flags |= VLIB_BUFFER_NEXT_PRESENT;
@@ -512,7 +519,8 @@ oct_rx_ipsec_attach_tail (vlib_main_t *vm, const union nix_rx_parse_u *rxp0,
 	}
     }
 
-  return total_segs;
+done:
+  ctx->n_segs += total_segs;
 }
 
 static_always_inline u32
@@ -556,7 +564,7 @@ oct_rx_inl_ipsec_vlib_from_cq (vlib_main_t *vm, vlib_node_runtime_t *node,
 	oct_get_len_from_meta (cpt_hdr, d[0].parse.w[0], d[0].parse.w[4]);
       idx = cpt_hdr->w0.cookie;
       oct_rx_ipsec_update_counters (vm, b[0], esp_sz, 1, idx);
-      oct_rx_ipsec_attach_tail (vm, orig_rxp, bt, b[0]);
+      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp, bt, b[0]);
     }
   ctx->n_rx_bytes += olen;
 
@@ -580,7 +588,7 @@ oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
   *err_flags |= ((d[0].parse.w[0] >> 20) & 0xFFF);
   ctx->n_segs += 1;
   if (d[0].sg0.segs > 1)
-    oct_rx_attach_tail (vm, ctx, b[0], d + 0);
+    oct_rx_attach_tail (vm, ctx, bt, b[0], d + 0);
   buffs[0] = b[0];
   return 0;
 }
@@ -711,10 +719,10 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 
 	  if (PREDICT_FALSE (segs > 4))
 	    {
-	      oct_rx_attach_tail (vm, ctx, b[0], d + 0);
-	      oct_rx_attach_tail (vm, ctx, b[1], d + 1);
-	      oct_rx_attach_tail (vm, ctx, b[2], d + 2);
-	      oct_rx_attach_tail (vm, ctx, b[3], d + 3);
+	      oct_rx_attach_tail (vm, ctx, &bt, b[0], d + 0);
+	      oct_rx_attach_tail (vm, ctx, &bt, b[1], d + 1);
+	      oct_rx_attach_tail (vm, ctx, &bt, b[2], d + 2);
+	      oct_rx_attach_tail (vm, ctx, &bt, b[3], d + 3);
 	    }
 
 	  buffs[0] = b[0];
@@ -801,10 +809,10 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		vm, b[0], esp_sz0, 1, idx0, b[1], esp_sz1, 1, idx1, b[2],
 		esp_sz2, 1, idx2, b[3], esp_sz3, 1, idx3);
 
-	      oct_rx_ipsec_attach_tail (vm, orig_rxp0, &bt, b[0]);
-	      oct_rx_ipsec_attach_tail (vm, orig_rxp1, &bt, b[1]);
-	      oct_rx_ipsec_attach_tail (vm, orig_rxp2, &bt, b[2]);
-	      oct_rx_ipsec_attach_tail (vm, orig_rxp3, &bt, b[3]);
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp2, &bt, b[2]);
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp3, &bt, b[3]);
 	    }
 	  else
 	    {
@@ -822,7 +830,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr0, d[0].parse.w[0], d[0].parse.w[4]);
 		  idx0 = cpt_hdr0->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[0], esp_sz0, 1, idx0);
-		  oct_rx_ipsec_attach_tail (vm, orig_rxp0, &bt, b[0]);
+		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
 		}
 
 	      if (is_fail1)
@@ -839,7 +847,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr1, d[1].parse.w[0], d[1].parse.w[4]);
 		  idx1 = cpt_hdr1->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[1], esp_sz1, 1, idx1);
-		  oct_rx_ipsec_attach_tail (vm, orig_rxp1, &bt, b[1]);
+		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
 		}
 
 	      if (is_fail2)
@@ -856,7 +864,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr2, d[2].parse.w[0], d[2].parse.w[4]);
 		  idx2 = cpt_hdr2->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[2], esp_sz2, 1, idx2);
-		  oct_rx_ipsec_attach_tail (vm, orig_rxp2, &bt, b[2]);
+		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp2, &bt, b[2]);
 		}
 
 	      if (is_fail3)
@@ -873,7 +881,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr3, d[3].parse.w[0], d[3].parse.w[4]);
 		  idx3 = cpt_hdr3->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[3], esp_sz3, 1, idx3);
-		  oct_rx_ipsec_attach_tail (vm, orig_rxp3, &bt, b[3]);
+		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp3, &bt, b[3]);
 		}
 	    }
 	  ctx->n_rx_bytes += olen0 + olen1 + olen2 + olen3;
