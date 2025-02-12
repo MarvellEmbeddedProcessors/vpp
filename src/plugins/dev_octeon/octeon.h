@@ -61,6 +61,12 @@ typedef enum
   OCT_DEVICE_TYPE_RVU_INL_VF,
 } __clib_packed oct_device_type_t;
 
+#define OCT_DEVTYPE_IS_VF(type)                                               \
+  ((type) == OCT_DEVICE_TYPE_RVU_VF || (type) == OCT_DEVICE_TYPE_LBK_VF ||    \
+   (type) == OCT_DEVICE_TYPE_SDP_VF ||                                        \
+   (type) == OCT_DEVICE_TYPE_O10K_CPT_VF ||                                   \
+   (type) == OCT_DEVICE_TYPE_RVU_INL_VF)
+
 typedef struct
 {
   /* vnet flow index */
