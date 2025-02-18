@@ -208,7 +208,6 @@ oct_populate_dma_device_list (u16 *nb_elem, u8 *dma_list)
 static void
 oct_virtio_parse_arguments (dao_pal_global_conf_t *conf, vnet_dev_arg_t *args)
 {
-  int i = 0;
   vnet_dev_arg_t *a = args;
 
   for (; a < vec_end (args) && a->val_set; a++)
@@ -233,7 +232,6 @@ oct_virtio_parse_arguments (dao_pal_global_conf_t *conf, vnet_dev_arg_t *args)
 	  log_info ("Invalid virtio device arguments received\n");
 	}
 
-      i++;
     }
 }
 
