@@ -158,7 +158,7 @@ typedef struct
   oct_device_t **oct_dev;
   u8 inl_dev_initialized : 1;
   u8 use_single_rx_aura : 1;
-  u64 aura_handle;
+  u64 rx_aura_handle;
 } oct_main_t;
 
 extern oct_main_t oct_main;
