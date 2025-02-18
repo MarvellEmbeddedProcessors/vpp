@@ -208,6 +208,11 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
   oct_main_t *om = &oct_main;
   oct_ipsec_main_t *oim = &oct_ipsec_main;
   oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
+  u8 bp_index = vlib_buffer_pool_get_default_for_numa (vm, 0);
+  vlib_buffer_pool_t *bp = vlib_get_buffer_pool (vm, bp_index);
+  struct npa_aura_s aura = {};
+  struct npa_pool_s npapool = { .nat_align = 1,
+				.buf_offset = OCT_EXT_HDR_SIZE / ROC_ALIGN };
   oct_device_t *cd = vnet_dev_get_data (dev), **oct_dev = 0;
   u8 mac_addr[6];
   int rrv;
@@ -294,6 +299,13 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
       },
     },
   };
+
+  if (om->use_single_rx_tx_aura && !om->rx_aura_handle)
+    {
+      if ((rrv = roc_npa_pool_create (&om->rx_aura_handle, bp->alloc_size,
+				      bp->n_buffers, &aura, &npapool, 0)))
+	return cnx_return_roc_err (dev, rrv, "roc_npa_pool_create");
+    }
 
   if (oidm->inl_dev)
     {
@@ -676,6 +688,7 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
 
+  oct_main.use_single_rx_tx_aura = 1;
   oct_inl_dev_main.in_min_spi = 0;
   oct_inl_dev_main.in_max_spi = 8192;
   oct_inl_dev_main.out_max_sa = 8192;
@@ -687,6 +700,8 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
     {
       if (unformat (line_input, "max-pools %u", &oct_npa_max_pools))
 	;
+      if (unformat (line_input, "disable-single-rx-tx-aura"))
+	oct_main.use_single_rx_tx_aura = 0;
       else if (unformat (line_input, "ipsec_in_min_spi %u",
 			 &oct_inl_dev_main.in_min_spi))
 	;

@@ -106,7 +106,7 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
   if (!om->use_single_rx_tx_aura)
     total_sz = rxq->size;
 
-  if (!om->use_single_rx_tx_aura || !cd->aura_handle)
+  if (!om->use_single_rx_tx_aura || !om->rx_aura_handle)
     {
       if ((rrv = roc_npa_pool_create (&crq->aura_handle, bp->alloc_size,
 				      total_sz, &aura, &npapool, 0)))
@@ -114,11 +114,10 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
 	  oct_rxq_deinit (vm, rxq);
 	  return oct_roc_err (dev, rrv, "roc_npa_pool_create() failed");
 	}
-      cd->aura_handle = crq->aura_handle;
     }
   else
     {
-      crq->aura_handle = cd->aura_handle;
+      crq->aura_handle = om->rx_aura_handle;
     }
 
   crq->npa_pool_initialized = 1;
