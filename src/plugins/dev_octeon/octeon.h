@@ -158,7 +158,6 @@ typedef struct
   struct roc_nix *nix;
   oct_msix_handler_info_t *msix_handler;
 
-  u64 aura_handle;
   u32 cached_cpt_pkts;
   u64 cpt_io_addr;
   oct_txq_t **ctqs;
@@ -171,6 +170,7 @@ typedef struct
   oct_device_t **oct_dev;
   u8 inl_dev_initialized : 1;
   u8 use_single_rx_tx_aura : 1;
+  u64 rx_aura_handle;
   u64 tx_aura_handle;
 } oct_main_t;
 
