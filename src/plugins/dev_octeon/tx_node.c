@@ -1557,6 +1557,14 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  roc_lmt_submit_steorl (lmt_arg, cd->cpt_io_addr);
 	  asm volatile("dmb oshst" ::: "memory");
 	}
+      else if (quad_bit == 0x0)
+	{
+	  failed_buff[n_nix_fc_drop] = vlib_get_buffer_index (vm, b[0]);
+	  failed_buff[n_nix_fc_drop + 1] = vlib_get_buffer_index (vm, b[1]);
+	  failed_buff[n_nix_fc_drop + 2] = vlib_get_buffer_index (vm, b[2]);
+	  failed_buff[n_nix_fc_drop + 3] = vlib_get_buffer_index (vm, b[3]);
+	  n_nix_fc_drop += 4;
+	}
 
       b += 4;
       n_packets -= 4;
