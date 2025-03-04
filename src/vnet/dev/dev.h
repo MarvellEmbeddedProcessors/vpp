@@ -170,7 +170,7 @@ typedef struct vnet_dev_port_cfg_change_req
   {
     u8 promisc : 1;
     vnet_dev_hw_addr_t addr;
-    u16 max_rx_frame_size;
+    u32 max_rx_frame_size;
     vnet_dev_queue_id_t queue_id;
     struct
     {
