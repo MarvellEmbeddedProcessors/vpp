@@ -1014,6 +1014,10 @@ oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
   buffs[*buffer_next_index] = b[0];
   next[*buffer_next_index] = ctx->next_index;
   *buffer_next_index = *buffer_next_index + 1;
+
+  if (fp_flags & OCT_FP_FLAG_TRACE_EN)
+    clib_memcpy_fast (b[0]->pre_data, d, sizeof (oct_nix_rx_cqe_desc_t));
+
   return 0;
 }
 
