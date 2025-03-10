@@ -475,8 +475,9 @@ oct_rxq_stop (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq)
   if ((rrv = roc_nix_rq_ena_dis (&crq->rq, 0)))
     oct_roc_err (dev, rrv, "roc_nix_rq_ena_dis() failed");
 
-  n =
-    oct_aura_free_all_buffers (vm, crq->aura_handle, crq->hdr_off, crq->n_enq);
+  n = oct_drain_queue (vm, rxq);
+  n += oct_aura_free_all_buffers (vm, crq->aura_handle, crq->hdr_off,
+				  crq->n_enq - n);
 
   if (crq->n_enq - n > 0)
     log_err (dev, "%u buffers leaked on rx queue %u stop", crq->n_enq - n,
@@ -505,6 +506,10 @@ oct_txq_stop (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
 	if (st.status.ccode != ALLOC_CCODE_INVAL)
 	  for (u32 i = 0; i < st.status.count; i++)
 	    {
+#if (CLIB_DEBUG > 0)
+	      if (!i || (i == 8))
+		cl->iova[i] &= OCT_BATCH_ALLOC_IOVA0_MASK;
+#endif
 	      vlib_buffer_t *b = (vlib_buffer_t *) (cl->iova[i] + off);
 	      vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
 	      ctq->n_enq--;
@@ -521,6 +526,7 @@ oct_txq_stop (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
     log_debug (dev, "%u buffers freed from tx queue %u", n, txq->queue_id);
 
   ctq->n_enq = 0;
+  ctq->ba_num_cl = ctq->ba_first_cl = 0;
 }
 
 vnet_dev_rv_t
@@ -578,6 +584,7 @@ done:
 void
 oct_port_stop (vlib_main_t *vm, vnet_dev_port_t *port)
 {
+  oct_inl_dev_main_t *inl_main = &oct_inl_dev_main;
   vnet_dev_t *dev = port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
   oct_port_t *cp = vnet_dev_get_port_data (port);
@@ -601,6 +608,15 @@ oct_port_stop (vlib_main_t *vm, vnet_dev_port_t *port)
     {
       oct_roc_err (dev, rrv, "roc_nix_npc_rx_ena_dis() failed");
       return;
+    }
+
+  if (inl_main->inl_dev)
+    {
+      if ((rrv = roc_nix_inl_rq_ena_dis (nix, false)))
+	{
+	  oct_roc_err (dev, rrv, "roc_nix_inl_rq_ena_dis failed");
+	  return;
+	}
     }
 
   foreach_vnet_dev_port_rx_queue (q, port)
