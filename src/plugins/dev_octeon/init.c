@@ -300,7 +300,7 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     },
   };
 
-  if (om->use_single_rx_tx_aura && !om->rx_aura_handle)
+  if (om->use_single_rx_aura && !om->rx_aura_handle)
     {
       if ((rrv = roc_npa_pool_create (&om->rx_aura_handle, bp->alloc_size,
 				      bp->n_buffers, &aura, &npapool, 0)))
@@ -422,7 +422,7 @@ oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
   if ((rv = oct_init_ipsec_backend (vm, dev)))
     return rv;
 
-  oct_main.use_single_rx_tx_aura = 1;
+  oct_main.use_single_rx_aura = 1;
   oct_main.inl_dev_initialized = 1;
 
   return VNET_DEV_OK;
@@ -688,7 +688,7 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
 
-  oct_main.use_single_rx_tx_aura = 1;
+  oct_main.use_single_rx_aura = 1;
   oct_inl_dev_main.in_min_spi = 0;
   oct_inl_dev_main.in_max_spi = 8192;
   oct_inl_dev_main.out_max_sa = 8192;
@@ -700,8 +700,8 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
     {
       if (unformat (line_input, "max-pools %u", &oct_npa_max_pools))
 	;
-      if (unformat (line_input, "disable-single-rx-tx-aura"))
-	oct_main.use_single_rx_tx_aura = 0;
+      if (unformat (line_input, "disable-single-rx-aura"))
+	oct_main.use_single_rx_aura = 0;
       else if (unformat (line_input, "ipsec_in_min_spi %u",
 			 &oct_inl_dev_main.in_min_spi))
 	;
