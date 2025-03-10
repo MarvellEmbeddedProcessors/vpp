@@ -1263,11 +1263,11 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 {
   oct_ipsec_main_t *im = &oct_ipsec_main;
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
+  u64 aura_handle = ctq->aura_handle;
   vnet_dev_t *dev = txq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
   u32 current_sq0, current_sq1, current_sq2, current_sq3;
   u64 sq_handle0, sq_handle1, sq_handle2, sq_handle3;
-  u64 aura_handle0, aura_handle1, aura_handle2, aura_handle3;
   u32 sa0_index, sa1_index, sa2_index, sa3_index;
   u32 current_sa0_index = ~0, current_sa1_index = ~0;
   u32 current_sa2_index = ~0, current_sa3_index = ~0;
@@ -1296,11 +1296,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
   sq_handle1 = 0;
   sq_handle2 = 0;
   sq_handle3 = 0;
-
-  aura_handle0 = 0;
-  aura_handle1 = 0;
-  aura_handle2 = 0;
-  aura_handle3 = 0;
 
   current_sq0 = ~0;
   current_sq1 = ~0;
@@ -1441,7 +1436,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  ctq = cd->ctqs[sq0];
 	  sq = &ctq->sq;
 	  sq_handle0 = sq->qid;
-	  aura_handle0 = ctq->aura_handle;
 	  n_left0 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
 	  current_sq0 = sq0;
 	}
@@ -1450,7 +1444,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  ctq = cd->ctqs[sq1];
 	  sq = &ctq->sq;
 	  sq_handle1 = sq->qid;
-	  aura_handle1 = ctq->aura_handle;
 	  n_left1 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
 	  current_sq1 = sq1;
 	}
@@ -1459,7 +1452,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  ctq = cd->ctqs[sq2];
 	  sq = &ctq->sq;
 	  sq_handle2 = sq->qid;
-	  aura_handle2 = ctq->aura_handle;
 	  n_left2 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
 	  current_sq2 = sq2;
 	}
@@ -1468,7 +1460,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  ctq = cd->ctqs[sq3];
 	  sq = &ctq->sq;
 	  sq_handle3 = sq->qid;
-	  aura_handle3 = ctq->aura_handle;
 	  n_left3 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
 	  current_sq3 = sq3;
 	}
@@ -1480,13 +1471,13 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
       lmt_arg = ROC_CN10K_CPT_LMT_ARG | (uint64_t) core_lmt_id;
       if (quad_bit == 0x0F)
 	{
-	  oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0,
+	  oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle,
 				  &pkt_meta[0], &inst0, &n_dwords[0], sess0);
-	  oct_prepare_ipsec_inst (vm, b[1], sq_handle1, aura_handle1,
+	  oct_prepare_ipsec_inst (vm, b[1], sq_handle1, aura_handle,
 				  &pkt_meta[1], &inst1, &n_dwords[1], sess1);
-	  oct_prepare_ipsec_inst (vm, b[2], sq_handle2, aura_handle2,
+	  oct_prepare_ipsec_inst (vm, b[2], sq_handle2, aura_handle,
 				  &pkt_meta[2], &inst2, &n_dwords[2], sess2);
-	  oct_prepare_ipsec_inst (vm, b[3], sq_handle3, aura_handle3,
+	  oct_prepare_ipsec_inst (vm, b[3], sq_handle3, aura_handle,
 				  &pkt_meta[3], &inst3, &n_dwords[3], sess3);
 
 	  oct_submit_quad_packets (lmt_arg, cd, &inst0, &inst1, &inst2, &inst3,
@@ -1502,7 +1493,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	{
 	  if (n_left0)
 	    {
-	      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0,
+	      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle,
 				      &pkt_meta[0], &inst0, &n_dwords[0],
 				      sess0),
 		roc_lmt_mov_seg ((void *) lmt_line[count], &inst0, 4);
@@ -1516,7 +1507,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	    }
 	  if (n_left1)
 	    {
-	      oct_prepare_ipsec_inst (vm, b[1], sq_handle1, aura_handle1,
+	      oct_prepare_ipsec_inst (vm, b[1], sq_handle1, aura_handle,
 				      &pkt_meta[1], &inst1, &n_dwords[1],
 				      sess1);
 	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst1, 4);
@@ -1532,7 +1523,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	    }
 	  if (n_left2)
 	    {
-	      oct_prepare_ipsec_inst (vm, b[2], sq_handle2, aura_handle2,
+	      oct_prepare_ipsec_inst (vm, b[2], sq_handle2, aura_handle,
 				      &pkt_meta[2], &inst2, &n_dwords[2],
 				      sess2);
 	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst2, 4);
@@ -1548,7 +1539,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	    }
 	  if (n_left3)
 	    {
-	      oct_prepare_ipsec_inst (vm, b[3], sq_handle3, aura_handle3,
+	      oct_prepare_ipsec_inst (vm, b[3], sq_handle3, aura_handle,
 				      &pkt_meta[3], &inst3, &n_dwords[3],
 				      sess3);
 	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst3, 4);
@@ -1618,7 +1609,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  ctq = cd->ctqs[sq0];
 	  sq = &ctq->sq;
 	  sq_handle0 = sq->qid;
-	  aura_handle0 = ctq->aura_handle;
 	  n_left0 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets);
 	  current_sq0 = sq0;
 	}
@@ -1629,7 +1619,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  goto next;
 	}
 
-      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle0, &pkt_meta[0],
+      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle, &pkt_meta[0],
 			      &inst0, &n_dwords[0], sess0);
 
       roc_lmt_mov_seg ((void *) lmt_line[0], &inst0, 4);
