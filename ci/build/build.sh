@@ -45,7 +45,7 @@ fi
 DEPS_DIR=
 BUILD=
 export CROSS="aarch64-marvell-linux-gnu-"
-export OCTEON_VERSION="cn10k"
+export OCTEON_VERSION=${OCTEON_VERSION:-"cn10k"}
 export PLATFORM="cnxk"
 
 eval set -- "$OPTS"
