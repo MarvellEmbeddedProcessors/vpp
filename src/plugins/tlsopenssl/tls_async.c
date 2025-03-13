@@ -105,10 +105,11 @@ struct engine_polling
 
 void qat_init_thread (void *arg);
 void dpdk_engine_init_thread (void *arg);
+void dpdk_engine_polling ();
 
 struct engine_polling engine_list[] = {
   { "qat", qat_polling, qat_pre_init, qat_init_thread },
-  { "dpdk_engine", dasync_polling, NULL, dpdk_engine_init_thread },
+  { "dpdk_engine", dpdk_engine_polling, NULL, dpdk_engine_init_thread },
   { "dasync", dasync_polling, NULL, NULL }
 };
 
@@ -609,6 +610,18 @@ tls_resume_from_crypto (int thread_index)
   resume_read_write_events (thread_index);
   resume_handshake_events (thread_index);
   return 0;
+}
+
+void
+dpdk_engine_polling ()
+{
+  openssl_async_t *om = &openssl_async_main;
+  int poll_status = 0;
+
+  if (om->start_polling)
+    {
+      ENGINE_ctrl_cmd (om->engine, "POLL", 0, &poll_status, NULL, 0);
+    }
 }
 
 void
