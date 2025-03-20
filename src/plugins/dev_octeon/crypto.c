@@ -1181,7 +1181,10 @@ oct_cpt_inst_w7_get (oct_crypto_sess_t *sess, struct roc_cpt *roc_cpt)
     inst_w7.s.ctx_val = 1;
 
   /* Set the engine group */
-  inst_w7.s.egrp = roc_cpt->eng_grp[CPT_ENG_TYPE_IE];
+  if (roc_model_is_cn20k ())
+    inst_w7.s.egrp = roc_cpt->eng_grp[CPT_ENG_TYPE_SE];
+  else
+    inst_w7.s.egrp = roc_cpt->eng_grp[CPT_ENG_TYPE_IE];
 
   return inst_w7.u64;
 }
