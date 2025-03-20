@@ -346,15 +346,19 @@ oct_conf_cpt (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd,
       log_err (dev, "Could not add CPT SE engines");
       return cnx_return_roc_err (dev, rrv, "roc_cpt_eng_grp_add");
     }
-  if ((rrv = roc_cpt_eng_grp_add (roc_cpt, CPT_ENG_TYPE_IE)) < 0)
+  if (!roc_model_is_cn20k ())
     {
-      log_err (dev, "Could not add CPT IE engines");
-      return cnx_return_roc_err (dev, rrv, "roc_cpt_eng_grp_add");
-    }
-  if (roc_cpt->eng_grp[CPT_ENG_TYPE_IE] != ROC_LEGACY_CPT_DFLT_ENG_GRP_SE_IE)
-    {
-      log_err (dev, "Invalid CPT IE engine group configuration");
-      return -1;
+      if ((rrv = roc_cpt_eng_grp_add (roc_cpt, CPT_ENG_TYPE_IE)) < 0)
+	{
+	  log_err (dev, "Could not add CPT IE engines");
+	  return cnx_return_roc_err (dev, rrv, "roc_cpt_eng_grp_add");
+	}
+      if (roc_cpt->eng_grp[CPT_ENG_TYPE_IE] !=
+	  ROC_LEGACY_CPT_DFLT_ENG_GRP_SE_IE)
+	{
+	  log_err (dev, "Invalid CPT IE engine group configuration");
+	  return -1;
+	}
     }
   if (roc_cpt->eng_grp[CPT_ENG_TYPE_SE] != ROC_LEGACY_CPT_DFLT_ENG_GRP_SE)
     {
