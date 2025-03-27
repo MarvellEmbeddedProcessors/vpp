@@ -4,6 +4,8 @@
  * https://spdx.org/licenses/Apache-2.0.html
  */
 
+option version = "0.1.0";
+
 /**
  * @brief Reply for adding a traffic management node.
  *
