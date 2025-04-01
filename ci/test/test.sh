@@ -15,11 +15,6 @@
 
 set -euox pipefail
 
-function target_board_init() {
-	echo "Setting up target board for running tests..."
-	$REMOTE "sudo TEST_DIR=${TEST_DIR} DPDK_DEVBIND=${REMOTE_BUILD_DIR}/ci/test/board/dpdk-devbind.py python3 ${REMOTE_BUILD_DIR}/ci/test/board/ci_runner.py -bv"
-}
-
 function install_packages() {
 	echo "Enabling internet on target board...."
 	$REMOTE 'echo "DNS=10.28.116.24 10.31.116.251 10.68.76.63" | sudo tee -a /etc/systemd/resolved.conf'
@@ -31,38 +26,71 @@ function install_packages() {
 	$REMOTE	"sudo pip3 install --break-system-packages --no-input psutil syslog_rfc5424_parser parameterized noise"
 }
 
-function sync_files() {
-	echo "Syncing build to target board..."
-	$REMOTE "rm -rf $REMOTE_DIR"
-	$REMOTE "mkdir -p $REMOTE_DIR"
-	# Sync build directory
-	rsync -e "$TARGET_SSH_CMD" -av $BUILD_DIR/* $TARGET_BOARD:$REMOTE_BUILD_DIR/
-	# Sync deps build directory if required
-	rsync -e "$TARGET_SSH_CMD" -r $DEPS_DIR/* $TARGET_BOARD:$REMOTE_DIR/deps_build
-	# Sync dpdk-devbind.py
-	$TARGET_SSH_CMD $TARGET_BOARD "sudo $TARGET_SCP_CMD $DPDK_DEVBIND_LOCATION ${REMOTE_BUILD_DIR}/ci/test/board/"
+function help() {
+	set +x
+	echo ""
+	echo "Usage:"
+	echo "$SCRIPT_NAME [ARGUMENTS]..."
+	echo ""
+	echo "Mandatory Arguments"
+	echo "==================="
+	echo "--build-root | -r            : Build root directory"
+	echo "--test-env | -t              : Test Environment"
+	echo ""
+	echo "Optional Arguments"
+	echo "==================="
+	echo "--run-dir | -d               : Run directory [Default=Build Root]"
+	echo "--project-root | -p          : VPP Project root [Default: PWD]"
+	echo "--help | -h                  : Print this help and exit"
+	set -x
 }
 
-function run_tests() {
-	echo "Running tests using run_tests.py..."
-	$REMOTE "python3 ${REMOTE_BUILD_DIR}/test/run_tests.py -d ${TEST_DIR}"
-}
+SCRIPT_NAME="$(basename "$0")"
+if ! OPTS=$(getopt \
+	-o "r:d:t:p:h" \
+	-l "build-root:,run-dir:,test-env:,project-root:,help" \
+	-n "$SCRIPT_NAME" \
+	-- "$@"); then
+	help
+	exit 1
+fi
 
-PROJECT_ROOT=${PROJECT_ROOT:-$PWD}
+BUILD_ROOT=
+TEST_ENV_CONF=
+PROJECT_ROOT="$PWD"
 TARGET_BOARD=${TARGET_BOARD:-root@127.0.0.1}
 TARGET_SSH_CMD=${TARGET_SSH_CMD:-"ssh"}
-TARGET_SCP_CMD=${TARGET_SCP_CMD:-"scp"}
 REMOTE="$TARGET_SSH_CMD $TARGET_BOARD -n"
-REMOTE_DIR=${REMOTE_DIR:-/tmp/vpp}
-BUILD_DIR=${BUILD_DIR:-$PWD/build}
-DEPS_DIR=${DEPS_DIR:-${PROJECT_ROOT}/deps-prefix}
-REMOTE_BUILD_DIR=${REMOTE_DIR}/build
-PLAT=${PLAT:-cn10k}
-DPDK_DEVBIND_LOCATION=${DPDK_DEVBIND_LOCATION:-ci@10.28.36.188:/home/ci/vpp/perf_stage_bins/$PLAT/dpdk-devbind.py}
 
-TEST_DIR=${REMOTE_BUILD_DIR}/src/plugins/dev_octeon/test/
+eval set -- "$OPTS"
+unset OPTS
+while [[ $# -gt 1 ]]; do
+	case $1 in
+		-r|--build-root) shift; BUILD_ROOT=$1;;
+		-d|--run-dir) shift; RUN_DIR=$1;;
+		-t|--test-env) shift; TEST_ENV_CONF=$(realpath $1);;
+		-p|--project-root) shift; PROJECT_ROOT=$1;;
+		-h|--help) help; exit 0;;
+		*) help; exit 1;;
+	esac
+	shift
+done
+
+if [[ -z $BUILD_ROOT || -z $TEST_ENV_CONF ]]; then
+	echo "Build root directory and test env should be given !!"
+	help
+	exit 1
+fi
+
+export PROJECT_ROOT=$(realpath $PROJECT_ROOT)
+mkdir -p $BUILD_ROOT
+export BUILD_ROOT=$(realpath $BUILD_ROOT)
+export BUILD_DIR=$BUILD_ROOT/build
+export RUN_DIR=${RUN_DIR:-$BUILD_DIR}
+mkdir -p $RUN_DIR
+
+source $TEST_ENV_CONF
 
 install_packages
-sync_files
-target_board_init
-run_tests
+# Run the tests
+$TEST_RUN_CMD
