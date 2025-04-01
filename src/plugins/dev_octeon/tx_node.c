@@ -772,7 +772,6 @@ oct_prepare_ipsec_inst (vlib_main_t *vm, vlib_buffer_t *b, u64 sq_handle,
 
   if (b->flags & VLIB_BUFFER_NEXT_PRESENT || rlen > buffer_data_size)
     {
-      ASSERT (0);
       total_length =
 	b->current_length + b->total_length_not_including_first_buffer;
       inst->w4.u64 = sess->inst.w4.u64;
