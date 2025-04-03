@@ -39,6 +39,8 @@ function sync_files() {
 	rsync -e "$TARGET_SSH_CMD" -av $BUILD_DIR/* $TARGET_BOARD:$REMOTE_BUILD_DIR/
 	# Sync deps build directory if required
 	rsync -e "$TARGET_SSH_CMD" -r $DEPS_DIR/* $TARGET_BOARD:$REMOTE_DIR/deps_build
+	# Sync dpdk-devbind.py
+	$TARGET_SSH_CMD $TARGET_BOARD "sudo $TARGET_SCP_CMD $DPDK_DEVBIND_LOCATION ${REMOTE_BUILD_DIR}/ci/test/board/"
 }
 
 function run_tests() {
@@ -49,13 +51,16 @@ function run_tests() {
 PROJECT_ROOT=${PROJECT_ROOT:-$PWD}
 TARGET_BOARD=${TARGET_BOARD:-root@127.0.0.1}
 TARGET_SSH_CMD=${TARGET_SSH_CMD:-"ssh"}
+TARGET_SCP_CMD=${TARGET_SCP_CMD:-"scp"}
 REMOTE="$TARGET_SSH_CMD $TARGET_BOARD -n"
 REMOTE_DIR=${REMOTE_DIR:-/tmp/vpp}
 BUILD_DIR=${BUILD_DIR:-$PWD/build}
 DEPS_DIR=${DEPS_DIR:-${PROJECT_ROOT}/deps-prefix}
 REMOTE_BUILD_DIR=${REMOTE_DIR}/build
+PLAT=${PLAT:-cn10k}
+DPDK_DEVBIND_LOCATION=${DPDK_DEVBIND_LOCATION:-ci@10.28.36.188:/home/ci/vpp/perf_stage_bins/$PLAT/dpdk-devbind.py}
 
-TEST_DIR=${REMOTE_BUILD_DIR}/src/plugins/onp/test/
+TEST_DIR=${REMOTE_BUILD_DIR}/src/plugins/dev_octeon/test/
 
 install_packages
 sync_files

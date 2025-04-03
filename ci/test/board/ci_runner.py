@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # https://spdx.org/licenses/Apache-2.0.html
 #
-# Copied from /src/plugins/onp/test/ci/ci_runner.py from vpp-24.02.
 
 import os
 import re
@@ -248,7 +247,10 @@ class CIRunner:
                     self.run_cmd(cmdstr)
 
                     devbdf = lnparse[0].decode("utf-8")
-                    cmdstr = "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override" % devbdf
+                    cmdstr = (
+                        "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override"
+                        % devbdf
+                    )
                     self.run_cmd(cmdstr)
                     cmdstr = "echo %s > /sys/bus/pci/drivers/vfio-pci/bind" % devbdf
                     self.run_cmd(cmdstr)
@@ -313,7 +315,10 @@ class CIRunner:
                     self.run_cmd(cmdstr)
 
                     devbdf = lnparse[0].decode("utf-8")
-                    cmdstr = "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override" % devbdf
+                    cmdstr = (
+                        "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override"
+                        % devbdf
+                    )
                     self.run_cmd(cmdstr)
                     cmdstr = "echo %s > /sys/bus/pci/drivers/vfio-pci/bind" % devbdf
                     self.run_cmd(cmdstr)
@@ -351,7 +356,9 @@ class CIRunner:
                 self.run_cmd(cmdstr)
 
                 devbdf = lnparse[0].decode("utf-8")
-                cmdstr = "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override" % devbdf
+                cmdstr = (
+                    "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override" % devbdf
+                )
                 self.run_cmd(cmdstr)
                 cmdstr = "echo %s > /sys/bus/pci/drivers/vfio-pci/bind" % devbdf
                 self.run_cmd(cmdstr)
@@ -389,7 +396,9 @@ class CIRunner:
                 self.run_cmd(cmdstr)
 
                 devbdf = lnparse[0].decode("utf-8")
-                cmdstr = "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override" % devbdf
+                cmdstr = (
+                    "echo vfio-pci > /sys/bus/pci/devices/%s/driver_override" % devbdf
+                )
                 self.run_cmd(cmdstr)
                 cmdstr = "echo %s > /sys/bus/pci/drivers/vfio-pci/bind" % devbdf
                 self.run_cmd(cmdstr)
@@ -496,7 +505,9 @@ if __name__ == "__main__":
     if test_dir is None or dpdk_devbind is None:
         exit("Please set the environment 'TEST_DIR' and 'DPDK_DEVBIND'")
 
-    runner = CIRunner(dir=test_dir, dpdk_devbind=dpdk_devbind, verb=verb, dry_run=dryrun)
+    runner = CIRunner(
+        dir=test_dir, dpdk_devbind=dpdk_devbind, verb=verb, dry_run=dryrun
+    )
 
     os.system("> {}/configs/pcie.ini".format(test_dir))
     os.system("echo '[default]' >> {}/configs/pcie.ini".format(test_dir))
