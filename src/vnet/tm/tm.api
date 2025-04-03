@@ -42,10 +42,10 @@ define tm_sys_node_add
   u32 client_index;
   u32 context;
   u32 sw_if_idx;
-  u32 parent_node_id;
+  i32 parent_node_id;
   u32 node_id;
   u32 weight;
-  u32 shaper_id;
+  i32 shaper_id;
   u32 lvl;
   u32 priority;
 };

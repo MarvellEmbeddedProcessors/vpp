@@ -28,7 +28,7 @@ vl_api_tm_sys_node_add_t_handler (vl_api_tm_sys_node_add_t *mp)
   tm_node_params_t n_p;
   int rv = -1;
   u32 node_id = 0;
-  u32 parent_node_id = 0;
+  i32 parent_node_id = 0;
   u32 priority = 0;
   u32 weight = 0;
   u32 lvl = 0;
@@ -36,8 +36,8 @@ vl_api_tm_sys_node_add_t_handler (vl_api_tm_sys_node_add_t *mp)
     vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
 
   node_id = clib_net_to_host_u32 (mp->node_id);
-  parent_node_id = clib_net_to_host_u32 (mp->parent_node_id);
-  n_p.shaper_profile_id = clib_net_to_host_u32 (mp->shaper_id);
+  parent_node_id = clib_net_to_host_i32 (mp->parent_node_id);
+  n_p.shaper_profile_id = clib_net_to_host_i32 (mp->shaper_id);
   weight = clib_net_to_host_u32 (mp->weight);
   priority = clib_net_to_host_u32 (mp->priority);
   lvl = clib_net_to_host_u32 (mp->lvl);

@@ -16,7 +16,7 @@
 typedef struct tm_node_params_
 {
   /* Shaper profile for the node. */
-  u32 shaper_profile_id;
+  i32 shaper_profile_id;
 
   union
   {
@@ -522,7 +522,7 @@ typedef struct tm_stats_params_
 typedef struct tm_system_t_
 {
   u32 hw_if_idx;
-  int (*node_add) (u32 hw_if_idx, u32 node_id, u32 parent_node_id,
+  int (*node_add) (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
 		   u32 priority, u32 weight, u32 lvl,
 		   tm_node_params_t *params);
 
@@ -558,7 +558,7 @@ typedef struct tm_system_t_
  *
  * @return 0 on success.
  */
-int tm_sys_node_add (u32 hw_if_idx, u32 node_id, u32 parent_node_id,
+int tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
 		     u32 priority, u32 weight, u32 lvl,
 		     tm_node_params_t *params);
 

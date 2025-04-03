@@ -24,7 +24,7 @@ tm_system_register (tm_system_t *tm_sys, u32 hw_if_idx)
 }
 
 int
-tm_sys_node_add (u32 hw_if_idx, u32 node_id, u32 parent_node_id, u32 priority,
+tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id, u32 priority,
 		 u32 weight, u32 lvl, tm_node_params_t *params)
 {
   vnet_main_t *vnm = vnet_get_main ();
