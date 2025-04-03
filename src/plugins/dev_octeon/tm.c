@@ -39,7 +39,7 @@ oct_roc_err (vnet_dev_t *dev, int rv, char *fmt, ...)
 }
 
 int
-oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, u32 parent_node_id,
+oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
 		     u32 priority, u32 weight, u32 lvl,
 		     tm_node_params_t *params)
 
@@ -64,7 +64,7 @@ oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, u32 parent_node_id,
     }
   if (parent_node_id)
     {
-      parent_node = roc_nix_tm_node_get (nix, parent_node_id);
+      parent_node = roc_nix_tm_node_get (nix, (u32) parent_node_id);
     }
 
   /* Find the right level */
@@ -91,14 +91,15 @@ oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, u32 parent_node_id,
     }
 
   tm_node->id = node_id;
-  tm_node->parent_id = parent_node_id;
+  tm_node->parent_id = (u32) parent_node_id;
   tm_node->lvl = lvl;
   tm_node->priority = priority;
   tm_node->free_fn = plt_free;
   tm_node->weight = weight;
-  tm_node->shaper_profile_id = params->shaper_profile_id;
+  tm_node->shaper_profile_id = (u32) params->shaper_profile_id;
 
-  profile = roc_nix_tm_shaper_profile_get (nix, params->shaper_profile_id);
+  profile =
+    roc_nix_tm_shaper_profile_get (nix, (u32) params->shaper_profile_id);
 
   rc = roc_nix_tm_node_add (nix, tm_node);
   if (rc < 0)

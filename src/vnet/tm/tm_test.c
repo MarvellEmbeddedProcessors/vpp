@@ -35,14 +35,15 @@ uword unformat_sw_if_index (unformat_input_t *input, va_list *args);
 static int
 api_tm_sys_node_add (vat_main_t *vam)
 {
-  u32 level, priority, node_id, weight, parent_node_id;
+  u32 level, priority, node_id, weight;
+  i32 parent_node_id = 0;
+  i32 shaper_id = 0;
   u8 priority_set = 0, level_set = 0;
   unformat_input_t *i = vam->input;
   vl_api_tm_sys_node_add_t *mp;
   u32 msg_size = sizeof (*mp);
   u8 sw_if_idx_set = 0;
   u32 sw_if_idx = 0;
-  u32 shaper_id = 0;
   int ret;
 
   vam->result_ready = 0;
@@ -78,8 +79,8 @@ api_tm_sys_node_add (vat_main_t *vam)
 
   mp->sw_if_idx = clib_host_to_net_u32 (sw_if_idx);
   mp->node_id = clib_host_to_net_u32 (node_id);
-  mp->parent_node_id = clib_host_to_net_u32 (parent_node_id);
-  mp->shaper_id = clib_host_to_net_u32 (shaper_id);
+  mp->parent_node_id = clib_host_to_net_i32 (parent_node_id);
+  mp->shaper_id = clib_host_to_net_i32 (shaper_id);
   mp->weight = clib_host_to_net_u32 (weight);
   mp->priority = clib_host_to_net_u32 (priority);
   mp->lvl = clib_host_to_net_u32 (level);
