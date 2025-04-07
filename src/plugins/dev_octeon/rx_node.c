@@ -958,7 +958,6 @@ oct_rx_inl_ipsec_vlib_from_cq (
   b[0]->template = *bt;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
   *err_flags |= ((d[0].parse.w[0] >> 20) & 0xFFF);
-  ctx->n_segs += 1;
 
   is_fail = !oct_ipsec_is_inl_op_success (cpt_hdr);
 
