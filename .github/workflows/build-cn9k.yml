@@ -49,7 +49,7 @@ jobs:
           [ -s /tmp/tags ] && NIGHTLY=false || NIGHTLY=true
           echo "PKG_VERSION_NAME=`./src/scripts/version | awk -F '-' '{print $1}'`" >> "${PWD}/artifacts/env"
           echo "MRVL_PKG_VERSION=`cat MRVL_VERSION`" >> "${PWD}/artifacts/env"
-          echo "CPT_PKG_VERSION=`cat CPT_PKG_VERSION`" >> "${PWD}/artifacts/env"
+          echo "CPT_PKG_VERSION=`cat DEP_PKG_VERSION | grep CPT_PKG_VERSION | awk -F'=' '{print $2}'`" >> "${PWD}/artifacts/env"
           echo "DPDK_PKG_VERSION=`cat DPDK_VERSION | grep RELEASE_VERSION | awk -F'=' '{print $2}'`" >> "${PWD}/artifacts/env"
           echo "DPDK_BASE_PKG_VERSION=`cat DPDK_VERSION | grep BASE_VERSION | awk -F'=' '{print $2}' | awk -F'.' '{print $1"."$2}'`" >> "${PWD}/artifacts/env"
           echo "PKG_POSTFIX=${PKG_POSTFIX}" >> "${PWD}/artifacts/env"
@@ -60,6 +60,7 @@ jobs:
       - name: Build VPP and generate package
         id: build
         run: |
+            set -x
             mkdir -p ~/.ccache
             BASE_DIR=${PWD}
             sudo apt-get update -q -y

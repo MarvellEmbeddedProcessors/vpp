@@ -50,7 +50,8 @@ jobs:
           [ -s /tmp/tags ] && NIGHTLY=false || NIGHTLY=true
           echo "PKG_VERSION_NAME=`./src/scripts/version | awk -F '-' '{print $1}'`" >> "${PWD}/artifacts/env"
           echo "MRVL_PKG_VERSION=`cat MRVL_VERSION`" >> "${PWD}/artifacts/env"
-          echo "CPT_PKG_VERSION=`cat CPT_PKG_VERSION`" >> "${PWD}/artifacts/env"
+          echo "CPT_PKG_VERSION=`cat DEP_PKG_VERSION | grep CPT_PKG_VERSION | awk -F'=' '{print $2}'`" >> "${PWD}/artifacts/env"
+          echo "OCTEP_PKG_VERSION=`cat DEP_PKG_VERSION | grep OCTEP_PKG_VERSION | awk -F'=' '{print $2}'`" >> "${PWD}/artifacts/env"
           echo "DPDK_PKG_VERSION=`cat DPDK_VERSION | grep RELEASE_VERSION | awk -F'=' '{print $2}'`" >> "${PWD}/artifacts/env"
           echo "DPDK_BASE_PKG_VERSION=`cat DPDK_VERSION | grep BASE_VERSION | awk -F'=' '{print $2}' | awk -F'.' '{print $1"."$2}'`" >> "${PWD}/artifacts/env"
           echo "PKG_POSTFIX=${PKG_POSTFIX}" >> "${PWD}/artifacts/env"
@@ -61,6 +62,7 @@ jobs:
       - name: Build VPP and generate package
         id: build
         run: |
+            set -x
             mkdir -p ~/.ccache
             BASE_DIR=${PWD}
             sudo apt-get update -q -y
@@ -126,8 +128,8 @@ jobs:
             ccache -p
             git config --global --add safe.directory "${PWD}"
             sudo APT_ARGS='-y -q' make install-deps
-            wget "https://github.com/MarvellEmbeddedProcessors/pcie_ep_octeon_target/releases/download/oct-ep-target-cn10k-${MRVL_PKG_VERSION}-${DISTRO}-${MRVL_PKG_VERSION}/oct-ep-target-cn10k_${MRVL_PKG_VERSION}_arm64.deb"
-            sudo apt-get install -y ./"oct-ep-target-cn10k_${MRVL_PKG_VERSION}_arm64.deb"
+            wget "https://github.com/MarvellEmbeddedProcessors/pcie_ep_octeon_target/releases/download/oct-ep-target-cn10k-${OCTEP_PKG_VERSION}-${DISTRO}-${OCTEP_PKG_VERSION}/oct-ep-target-cn10k_${OCTEP_PKG_VERSION}_arm64.deb"
+            sudo apt-get install -y ./"oct-ep-target-cn10k_${OCTEP_PKG_VERSION}_arm64.deb"
             make build-release VPP_PLATFORM=octeon10
             mkdir -p "${PWD}/install/DEBIAN"
             mkdir -p "${PWD}/install/usr/share/vpp/api"
@@ -137,7 +139,7 @@ jobs:
             echo 'Package: vpp-'$PKG_VERSION_NAME'-cn10k'$PKG_POSTFIX >> DEBIAN/control
             echo 'Version: '$MRVL_PKG_VERSION >> DEBIAN/control
             echo "Maintainer: Jerin Jacob (jerinj@marvell.com)" >> DEBIAN/control
-            echo 'Depends: python3, python3-ply, dpdk-'$DPDK_BASE_PKG_VERSION'-cn10k (= '$DPDK_PKG_VERSION'), cpt-firmware-cn10k'${FW_PKG_POSTFIX}' (= '$CPT_PKG_VERSION'), oct-ep-target-cn10k (>= '$MRVL_PKG_VERSION')' >> DEBIAN/control
+            echo 'Depends: python3, python3-ply, dpdk-'$DPDK_BASE_PKG_VERSION'-cn10k (= '$DPDK_PKG_VERSION'), cpt-firmware-cn10k'${FW_PKG_POSTFIX}' (= '$CPT_PKG_VERSION'), oct-ep-target-cn10k (>= '$OCTEP_PKG_VERSION')' >> DEBIAN/control
             echo "Architecture: arm64" >> DEBIAN/control
             echo "Homepage: https://wiki.fd.io/view/VPP" >> DEBIAN/control
             echo "Description: Vector Packet Processing (VPP) for Octeon10" >> DEBIAN/control
