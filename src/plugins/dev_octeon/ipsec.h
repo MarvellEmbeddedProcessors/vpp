@@ -121,8 +121,7 @@ typedef struct
   struct roc_ot_ipsec_outb_sa **out_sa;
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
   struct cpt_inst_s inst;
-  uint16_t iv_offset;
-  uint8_t iv_length;
+  u16 sq;
   u32 itf_sw_idx;
   /* Packet length for IPsec encapsulation */
   oct_ipsec_encap_len_t encap;
