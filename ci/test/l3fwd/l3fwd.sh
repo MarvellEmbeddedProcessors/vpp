@@ -4,8 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # https://spdx.org/licenses/Apache-2.0.html
 
-#set -e
-set -euox pipefail
+set -e
 
 OCTEONTESTPATH="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )/.."
 
@@ -87,7 +86,7 @@ vpp_stats_all l3fwd > /dev/null
 pktgen_stats > /dev/null
 
 echo "-------------------- L3FWD LOGS ---------------------"
-#vpp_log 'L3FWD'
+vpp_log l3fwd
 echo "-------------------- PKTGEN LOGS --------------------"
 pktgen_log
 
