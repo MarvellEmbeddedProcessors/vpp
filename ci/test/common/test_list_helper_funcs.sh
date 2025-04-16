@@ -38,6 +38,43 @@ function get_test_info()
 	echo $info
 }
 
+function get_test_exec_bin()
+{
+	echo "vpp"
+}
+
+function get_test_dir()
+{
+	echo "ci/test/$1"
+}
+
+function get_test_args()
+{
+	get_test_info $1 | awk -F'#' '{print $4}'
+}
+
+function get_test_extra_args()
+{
+	local tst=$1
+	local args=
+
+	tst="${tst%% }"
+	IFS=$'\n'
+	for t in ${CMD_EXTRA_ARGS:-}; do
+		if [ "${t%,*}" == "$tst" ]; then
+			args=${t#*,}
+			break
+		fi
+	done
+	echo $args
+	IFS=' '
+}
+
+function get_test_env()
+{
+	get_test_info $1 | awk -F'#' '{print $5}'
+}
+
 function get_test_timeout()
 {
 	local tmo=${DEFAULT_CMD_TIMEOUT:-5m}
