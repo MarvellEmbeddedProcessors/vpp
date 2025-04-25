@@ -1,0 +1,44 @@
+binary-api tm_sys_stop_tm sw_if_idx 2
+
+binary-api tm_sys_shaper_profile_create sw_if_idx 2 shaper_id  200 packet_mode 0 shaper_peak_burst 1500 shaper_peak_rate 25000000 shaper_commit_burst 1500 shaper_commit_rate 25000000 shaper_len_adjust 0
+binary-api tm_sys_shaper_profile_create sw_if_idx 2 shaper_id  400 packet_mode 0 shaper_peak_burst 1500 shaper_peak_rate 50000000 shaper_commit_burst 1500 shaper_commit_rate 50000000 shaper_len_adjust 0
+
+binary-api tm_sys_node_add sw_if_idx 2 node_id 200 parent_node_id -1 priority 0 weight 100 level 0 shaper_prof 400
+binary-api tm_sys_node_add sw_if_idx 2 node_id 300 parent_node_id 200 priority 0 weight 100 level 1 shaper_prof 400
+binary-api tm_sys_node_add sw_if_idx 2 node_id 400 parent_node_id 300 priority 0 weight 100 level 2 shaper_prof 200
+binary-api tm_sys_node_add sw_if_idx 2 node_id 401 parent_node_id 300 priority 0 weight 100 level 2 shaper_prof 200
+binary-api tm_sys_node_add sw_if_idx 2 node_id 500 parent_node_id 400 priority 0 weight 100 level 3 shaper_prof 200
+binary-api tm_sys_node_add sw_if_idx 2 node_id 501 parent_node_id 401 priority 0 weight 100 level 3 shaper_prof 200
+
+binary-api tm_sys_node_add sw_if_idx 2 node_id 0 parent_node_id 500 priority 0 weight 100 level 4 shaper_prof -1
+binary-api tm_sys_node_add sw_if_idx 2 node_id 1 parent_node_id 500 priority 0 weight 100 level 4 shaper_prof -1
+binary-api tm_sys_node_add sw_if_idx 2 node_id 2 parent_node_id 501 priority 0 weight 100 level 4 shaper_prof -1
+binary-api tm_sys_node_add sw_if_idx 2 node_id 3 parent_node_id 501 priority 0 weight 100 level 4 shaper_prof -1
+binary-api tm_sys_node_add sw_if_idx 2 node_id 4 parent_node_id 501 priority 0 weight 100 level 4 shaper_prof -1
+
+binary-api tm_sys_start_tm sw_if_idx 2
+
+test flow add dst-ip 10.253.0.0 proto udp redirect-to-queue 0
+test flow add dst-ip 10.253.0.1 proto udp redirect-to-queue 1
+test flow add dst-ip 10.253.0.2 proto udp redirect-to-queue 2
+test flow add dst-ip 10.253.0.3 proto udp redirect-to-queue 3
+test flow enable index 0 eth0
+test flow enable index 1 eth0
+test flow enable index 2 eth0
+test flow enable index 3 eth0
+
+set interface mac address eth0 00:01:02:03:04:01
+
+set int state eth0 up
+set int state eth1 up
+
+set int ip address eth0 2.0.0.1/24
+set int ip address eth1 3.0.0.1/24
+
+ip neighbor eth0 2.0.0.2 10:70:fd:24:48:58 static
+ip neighbor eth1 10.253.0.0 10:70:fd:24:48:59 static
+ip neighbor eth1 10.253.0.1 10:70:fd:24:48:59 static
+ip neighbor eth1 10.253.0.2 10:70:fd:24:48:59 static
+ip neighbor eth1 10.253.0.3 10:70:fd:24:48:59 static
+
+ip route add 10.253.0.0/24 via eth1
