@@ -40,13 +40,6 @@ jobs:
           mkdir -p "${PWD}/artifacts"
           git tag --points-at HEAD > /tmp/tags
           [ -s /tmp/tags ] && PKG_POSTFIX= || PKG_POSTFIX=-devel
-          FW_PKG_POSTFIX=""
-          if [ ${PKG_POSTFIX} == "-devel" ]; then
-            FW_PKG_POSTFIX=""
-          else
-            FW_PKG_POSTFIX=$PKG_POSTFIX
-          fi
-          echo "FW_PKG_POSTFIX=${FW_PKG_POSTFIX}" >> "${PWD}/artifacts/env"
           [ -s /tmp/tags ] && NIGHTLY=false || NIGHTLY=true
           echo "PKG_VERSION_NAME=`./src/scripts/version | awk -F '-' '{print $1}'`" >> "${PWD}/artifacts/env"
           echo "MRVL_PKG_VERSION=`cat MRVL_VERSION`" >> "${PWD}/artifacts/env"
@@ -139,7 +132,7 @@ jobs:
             echo 'Package: vpp-'$PKG_VERSION_NAME'-cn10k'$PKG_POSTFIX >> DEBIAN/control
             echo 'Version: '$MRVL_PKG_VERSION >> DEBIAN/control
             echo "Maintainer: Jerin Jacob (jerinj@marvell.com)" >> DEBIAN/control
-            echo 'Depends: python3, python3-ply, dpdk-'$DPDK_BASE_PKG_VERSION'-cn10k (= '$DPDK_PKG_VERSION'), cpt-firmware-cn10k'${FW_PKG_POSTFIX}' (= '$CPT_PKG_VERSION'), oct-ep-target-cn10k (>= '$OCTEP_PKG_VERSION')' >> DEBIAN/control
+            echo 'Depends: python3, python3-ply, dpdk-'$DPDK_BASE_PKG_VERSION'-cn10k (= '$DPDK_PKG_VERSION'), cpt-firmware-cn10k (= '$CPT_PKG_VERSION'), oct-ep-target-cn10k (>= '$OCTEP_PKG_VERSION')' >> DEBIAN/control
             echo "Architecture: arm64" >> DEBIAN/control
             echo "Homepage: https://wiki.fd.io/view/VPP" >> DEBIAN/control
             echo "Description: Vector Packet Processing (VPP) for Octeon10" >> DEBIAN/control
