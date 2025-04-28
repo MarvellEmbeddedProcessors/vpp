@@ -181,7 +181,7 @@ jobs:
           fi
         continue-on-error: true
       - name: Release VPP cn10k package
-        uses: softprops/action-gh-release@v2.0.4
+        uses: softprops/action-gh-release@v2.2.2
         if: ${{ github.event_name == 'push' }}
         with:
           draft: false
