@@ -22,8 +22,7 @@ function install_packages() {
 	sleep 30
 	echo "Installing essential packages..."
 	$REMOTE "sudo apt-get update"
-	$REMOTE "sudo apt-get install -y python3-venv python3-pip"
-	$REMOTE	"sudo pip3 install --break-system-packages --no-input psutil syslog_rfc5424_parser parameterized noise"
+	$REMOTE	"sudo pip3 install --break-system-packages --no-input syslog_rfc5424_parser noise"
 }
 
 function help() {
