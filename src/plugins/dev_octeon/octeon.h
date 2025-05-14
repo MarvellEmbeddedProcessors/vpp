@@ -39,6 +39,7 @@ typedef enum
 typedef enum
 {
   OCT_DEV_ARG_CRYPTO_N_DESC = 1,
+  OCT_DEV_ARG_END,
 } oct_dev_args_t;
 
 typedef enum

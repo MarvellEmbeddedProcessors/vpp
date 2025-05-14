@@ -94,7 +94,7 @@ static vnet_dev_arg_t oct_port_args[] = {
   },
   {
     .id = OCT_PORT_ARG_EN_ETH_PAUSE_FRAME,
-    .name = "eth-pause-frame",
+    .name = "eth_pause_frame",
     .desc = "Enable ethernet pause frame support, applicable to network "
 	    "devices only",
     .type = VNET_DEV_ARG_TYPE_BOOL,
@@ -119,9 +119,15 @@ static vnet_dev_arg_t oct_dev_args[] = {
   {
     .id = OCT_DEV_ARG_CRYPTO_N_DESC,
     .name = "n_desc",
-    .desc = "number of cpt descriptors",
+    .desc = "number of cpt descriptors, applicable to cpt devices only",
     .type = VNET_DEV_ARG_TYPE_UINT32,
-    .default_val.uint32 = 16384,
+    .default_val.uint32 = OCT_CPT_LF_DEF_NB_DESC,
+  },
+  {
+    .id = OCT_DEV_ARG_END,
+    .name = "end",
+    .desc = "Argument end",
+    .type = VNET_DEV_ARG_END,
   },
 };
 
