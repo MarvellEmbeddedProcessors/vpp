@@ -41,6 +41,8 @@ format_oct_nix_rx_cqe_desc (u8 *s, va_list *args)
   _ (flow_key_alg, "%u");
   _ (eoh_ptr, "%u");
   _ (match_id, "0x%x");
+  if (p->match_id)
+    s = format (s, " PKT_RX_FDIR 0x%x", p->match_id);
   s = format (s, "\n%U ", format_white_space, indent);
   _ (wqe_aura, "0x%x");
   _ (pb_aura, "0x%x");
