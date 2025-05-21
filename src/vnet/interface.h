@@ -45,6 +45,7 @@
 #include <vnet/l3_types.h>
 #include <vppinfra/lock.h>
 #include <vnet/tm/tm.h>
+#include <vnet/pfc/pfc.h>
 #include <vnet/hash/hash.h>
 
 struct vnet_main_t;
@@ -308,6 +309,7 @@ typedef struct _vnet_device_class
   vnet_interface_rss_queues_set_t *set_rss_queues_function;
 
   tm_system_t *tm_sys_impl;
+  pfc_system_t *pfc_sys_impl;
 } vnet_device_class_t;
 
 u32 vnet_register_device_class (vlib_main_t *, vnet_device_class_t *);

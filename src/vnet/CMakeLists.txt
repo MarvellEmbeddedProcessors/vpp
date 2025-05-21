@@ -1389,6 +1389,21 @@ list(APPEND VNET_HEADERS
 list(APPEND VNET_API_FILES tm/tm.api)
 
 ##############################################################################
+# PFC
+##############################################################################
+
+list(APPEND VNET_SOURCES
+  pfc/pfc.c
+  pfc/pfc_api.c
+)
+
+list(APPEND VNET_HEADERS
+  pfc/pfc.h
+)
+
+list(APPEND VNET_API_FILES pfc/pfc.api)
+
+##############################################################################
 # ARP/ND
 ##############################################################################
 
@@ -1456,6 +1471,7 @@ add_vat_test_library(vnet
   l2/l2_test.c
   ipsec/ipsec_test.c
   tm/tm_test.c
+  pfc/pfc_test.c
 )
 
 ##############################################################################
