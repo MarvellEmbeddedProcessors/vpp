@@ -102,6 +102,10 @@ VNET Traffic Management
 I:	tm
 F:	src/vnet/tm/
 
+VNET Priority Flow Control
+I:	pfc
+F:	src/vnet/pfc/
+
 VNET New Device Drivers Infra
 I:	dev
 M:	Damjan Marion <damarion@cisco.com>

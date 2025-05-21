@@ -280,6 +280,7 @@ typedef struct vnet_dev_rx_queue
   u8 enabled : 1;
   u8 started : 1;
   u8 suspended : 1;
+  u8 tc : 4;
   vnet_dev_queue_id_t queue_id;
   u16 size;
   u16 next_index;
