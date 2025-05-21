@@ -65,6 +65,17 @@ function target_sync()
 	$TARGET_SSH_CMD $TARGET_BOARD "sudo $TARGET_SCP_CMD $UTILS_LOCATION/dpdk-testpmd /usr/local/bin"
 	# Sync pcap utils
 	$TARGET_SSH_CMD $TARGET_BOARD "sudo $TARGET_SCP_CMD $UTILS_LOCATION/pcap-* ${REMOTE_BUILD_DIR}/ci/test/common/pcap/"
+#
+	if [[ -n $GENERATOR_BOARD ]]; then
+		$TARGET_SSH_CMD $GENERATOR_BOARD mkdir -p $TARGET_RUN_DIR/deps
+		rsync -e "$TARGET_SSH_CMD" -av $BUILD_DIR/* $GENERATOR_BOARD:$REMOTE_BUILD_DIR/
+		rsync -e "$TARGET_SSH_CMD" -av $BUILD_DIR/../* $GENERATOR_BOARD:$REMOTE_BUILD_DIR/
+		# Sync testpmd
+		$TARGET_SSH_CMD $GENERATOR_BOARD "sudo $TARGET_SCP_CMD $UTILS_LOCATION/dpdk-testpmd /usr/local/bin"
+		$sync -e "$TARGET_SSH_CMD" \
+			$PROJECT_ROOT/ci/test/board/oxk-devbind-basic.sh \
+			$GENERATOR_BOARD:$REMOTE_DIR
+	fi
 }
 
 function target_setup()
@@ -78,6 +89,13 @@ function target_setup()
 		return
 	fi
 	$PROJECT_ROOT/ci/test/board/oct-target-setup.sh
+
+	if [[ -n $GENERATOR_BOARD ]]; then
+		# Setup Generator Board also
+		TARGET_BOARD=$GENERATOR_BOARD VFIO_DEVBIND=$REMOTE_DIR/oxk-devbind-basic.sh \
+			$PROJECT_ROOT/ci/test/board/oct-target-setup.sh
+	fi
+
 }
 
 function run_test()

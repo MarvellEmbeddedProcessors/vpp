@@ -1,0 +1,7 @@
+PPS of tests on 106xx and multiple RCLK
+---------------------------------------
+
+L3FWD_1C 12550000
+L3FWD_2C 24550000
+L3FWD_4C 44000000
+L3FWD_8C 74000000
