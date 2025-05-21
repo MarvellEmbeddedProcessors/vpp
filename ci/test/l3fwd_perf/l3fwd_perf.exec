@@ -1,0 +1,8 @@
+set int mac address eth0 00:01:02:03:04:01
+
+set int ip address eth0 2.0.0.1/24
+
+ip route add 0.0.0.0/0 via eth0
+
+set int state eth0 up
+

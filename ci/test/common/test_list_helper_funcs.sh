@@ -170,6 +170,6 @@ function get_test_command()
 
 	test_dir=$(get_test_dir $name)
 
-	cmd="cd $REMOTE_BUILD_DIR/ci/test/$name && $TARGET_SUDO bash ${REMOTE_BUILD_DIR}/ci/test/$name/$name.sh"
+	cmd="cd $REMOTE_BUILD_DIR/ci/test/$name && $TARGET_SUDO TARGET_BOARD=$TARGET_BOARD GENERATOR_BOARD=$GENERATOR_BOARD bash ${REMOTE_BUILD_DIR}/ci/test/$name/$name.sh"
 	echo "$cmd"
 }
