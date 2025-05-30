@@ -41,6 +41,7 @@ add_vpp_plugin(dev_octeon
   ipsec.c
   esp_encrypt.c
   tm.c
+  pfc.c
 
   MULTIARCH_SOURCES
   rx_node.c
