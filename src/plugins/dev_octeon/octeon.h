@@ -259,7 +259,7 @@ vnet_dev_rv_t oct_txq_get_stats (vlib_main_t *, vnet_dev_port_t *,
 typedef enum
 {
 #define _(f, n, s, d) OCT_RX_NODE_CTR_##f,
-  foreach_octeon10_ipsec_ucc
+  foreach_octeon_ipsec_ucc
   foreach_oct_rx_node_counter
 #undef _
 } oct_rx_node_counter_t;
@@ -298,7 +298,8 @@ extern tm_system_t dev_oct_tm_ops;
 
 #define foreach_oct_fp_flag                                                   \
   _ (UNUSED, 0)                                                               \
-  _ (TRACE_EN, 1)
+  _ (TRACE_EN, 1)                                                             \
+  _ (O20, 2)
 
 typedef enum
 {
