@@ -47,7 +47,7 @@ typedef enum
 
 typedef enum
 {
-  OCT_PORT_ARG_EN_ETH_PAUSE_FRAME = 1,
+  OCT_PORT_ARG_EN_ETH_FLOW_CTRL = 1,
   OCT_PORT_ARG_ALLMULTI_MODE,
   OCT_PORT_ARG_SWITCH_HDR_TYPE,
   OCT_PORT_ARG_END
@@ -164,6 +164,10 @@ typedef struct
   u8 nix_initialized : 1;
   u8 status : 1;
   u8 full_duplex : 1;
+  u8 mode : 2;
+  u8 class_en;
+  u8 rx_pause_en;
+  u8 tx_pause_en;
   u32 speed;
   struct plt_pci_device plt_pci_dev;
   struct roc_nix *nix;
@@ -225,6 +229,9 @@ vnet_dev_rv_t oct_flow_validate_params (vlib_main_t *, vnet_dev_port_t *,
 					uword *);
 vnet_dev_rv_t oct_flow_query (vlib_main_t *, vnet_dev_port_t *, u32, uword,
 			      u64 *);
+
+/* pfc.c */
+int oct_pfc_sys_init_args (pfc_system_t *pfc);
 
 /* counter.c */
 void oct_port_add_counters (vlib_main_t *, vnet_dev_port_t *);

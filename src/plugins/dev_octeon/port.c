@@ -17,6 +17,7 @@
 
 extern oct_inl_dev_main_t oct_inl_dev_main;
 tm_system_t tm_system_ops;
+pfc_system_t pfc_system_ops;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -66,7 +67,7 @@ oct_roc_err (vnet_dev_t *dev, int rv, char *fmt, ...)
 }
 
 vnet_dev_rv_t
-oct_port_pause_flow_control_init (vlib_main_t *vm, vnet_dev_port_t *port)
+oct_port_flow_control_init (vlib_main_t *vm, vnet_dev_port_t *port)
 {
   vnet_dev_t *dev = port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
@@ -77,7 +78,7 @@ oct_port_pause_flow_control_init (vlib_main_t *vm, vnet_dev_port_t *port)
   struct roc_nix_rq *rq;
   int rrv;
 
-  /* pause flow control is not supported on SDP/LBK devices */
+  /* Flow control is not supported on SDP/LBK devices */
   if (roc_nix_is_sdp (nix) || roc_nix_is_lbk (nix))
     {
       log_notice (dev,
@@ -133,6 +134,7 @@ oct_port_pause_flow_control_init (vlib_main_t *vm, vnet_dev_port_t *port)
   if (rrv)
     return oct_roc_err (dev, rrv, "roc_nix_fc_mode_set failed");
 
+  cd->mode = PFC_ETH_FC_FULL;
   return VNET_DEV_OK;
 }
 
@@ -167,7 +169,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   u8 mac_addr[PLT_ETHER_ADDR_LEN];
   struct roc_nix *nix = cd->nix;
   vnet_dev_rv_t rv = -1;
-  bool is_allmulti_enable = false, is_pause_frame_enable = false;
+  bool is_allmulti_enable = false, is_flow_ctrl_enable = false;
   u32 total_sz = 0;
   int rrv;
 
@@ -177,9 +179,9 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     {
       if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE && vnet_dev_arg_get_bool (arg))
 	is_allmulti_enable = true;
-      if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
+      if (arg->id == OCT_PORT_ARG_EN_ETH_FLOW_CTRL &&
 	  vnet_dev_arg_get_bool (arg))
-	is_pause_frame_enable = true;
+	is_flow_ctrl_enable = true;
       if (arg->id == OCT_PORT_ARG_SWITCH_HDR_TYPE &&
 	  vnet_dev_arg_get_string (arg))
 	cp->npc.switch_header_type =
@@ -310,9 +312,8 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
       return rv;
     }
 
-  /* Configure pause frame flow control*/
-  if (is_pause_frame_enable &&
-      (rv = oct_port_pause_flow_control_init (vm, port)))
+  /* Configure flow control if requested */
+  if (is_flow_ctrl_enable && (rv = oct_port_flow_control_init (vm, port)))
     {
       oct_port_deinit (vm, port);
       return rv;
@@ -329,6 +330,9 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 
   oct_init_tm_args (&tm_system_ops);
   tm_system_register (&tm_system_ops, port->intf.hw_if_index);
+
+  oct_pfc_sys_init_args (&pfc_system_ops);
+  pfc_system_register (&pfc_system_ops, port->intf.hw_if_index);
 
   return VNET_DEV_OK;
 }
