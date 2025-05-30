@@ -14,7 +14,7 @@
 #define OCT_EXT_HDR_FROM_VLIB_BUFFER(x)                                       \
   (((oct_ipsec_outbound_pkt_meta_t *) (x)) - 1)
 
-#define foreach_octeon10_ipsec_ucc                                            \
+#define foreach_octeon_ipsec_ucc                                              \
   _ (SUCCESS, success, INFO, "Packet successfully processed")                 \
   _ (ERR_SA_INVAL, err_sa_inval, ERROR, "SA invalid")                         \
   _ (ERR_SA_EXPIRED, err_sa_expired, ERROR, "SA hard-expired")                \
@@ -118,7 +118,7 @@ typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
   /* Outbound SA */
-  struct roc_ot_ipsec_outb_sa **out_sa;
+  void **out_sa;
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
   struct cpt_inst_s inst;
   u16 sq;
