@@ -27,6 +27,31 @@ typedef struct
   u16 buffer_start_index;
 } oct_rx_node_ctx_t;
 
+static_always_inline u64
+oct_get_wqe_from_cpt_hdr (union cpt_parse_hdr_u *cpt_hdr, const u64 fp_flags)
+{
+  if (fp_flags & OCT_FP_FLAG_O20)
+    return cpt_hdr->u64[1];
+  return clib_net_to_host_u64 (cpt_hdr->u64[1]);
+}
+
+static_always_inline void *
+oct_ipsec_inb_sa_priv (u32 idx, const u64 fp_flags)
+{
+  oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
+  struct roc_ot_ipsec_inb_sa *roc_sa;
+
+  if (fp_flags & OCT_FP_FLAG_O20)
+    {
+      struct roc_ow_ipsec_inb_sa *roc_sa;
+      roc_sa = roc_nix_inl_ow_ipsec_inb_sa (oidm->inb_sa_base, idx);
+      return roc_nix_inl_ow_ipsec_inb_sa_sw_rsvd (roc_sa);
+    }
+
+  roc_sa = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, idx);
+  return roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa);
+}
+
 static_always_inline vlib_buffer_t *
 oct_seg_to_bp (void *p)
 {
@@ -555,18 +580,16 @@ static_always_inline void
 oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_node_runtime_t *node,
 			      vlib_buffer_t **buffs, u16 *next,
 			      u16 *buffer_next_index, u32 ilen, u8 frag_cnt,
-			      u32 idx, const u8 reass_fail)
+			      u32 idx, const u8 reass_fail, const u64 fp_flags)
 {
   vlib_combined_counter_main_t *rx_counter;
   ipsec_main_t *im = &ipsec_main;
   oct_ipsec_session_t *session;
-  struct roc_ot_ipsec_inb_sa *roc_sa;
   oct_ipsec_inb_sa_priv_data_t *inb_sa_priv;
   vlib_buffer_t *b = buffs[*buffer_next_index - 1];
   u32 sa_idx, itf_sw_idx;
   vnet_interface_main_t *vim;
   oct_ipsec_main_t *oim = &oct_ipsec_main;
-  oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
   vnet_main_t *vnm;
   int i;
 
@@ -574,8 +597,7 @@ oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_node_runtime_t *node,
   vim = &vnm->interface_main;
   rx_counter = vim->combined_sw_if_counters + VNET_INTERFACE_COUNTER_RX;
 
-  roc_sa = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, idx);
-  inb_sa_priv = roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa);
+  inb_sa_priv = oct_ipsec_inb_sa_priv (idx, fp_flags);
 
   sa_idx = (u32) inb_sa_priv->user_data;
 
@@ -620,29 +642,40 @@ oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_node_runtime_t *node,
 static_always_inline u8
 oct_rx_ipsec_reassembly (vlib_main_t *vm, vlib_node_runtime_t *node,
 			 vlib_buffer_template_t *bt,
-			 struct cpt_cn10k_parse_hdr_s *cpt_hdr,
+			 union cpt_parse_hdr_u *cpt_hdr_u,
 			 oct_nix_rx_cqe_desc_t *d, vlib_buffer_t *b,
 			 vlib_buffer_t **buf, u16 *next,
 			 u16 *buffer_next_index, u32 *olen, u32 *esp_len,
 			 u32 l2_ol3_hdr_size, const u64 fp_flags)
 {
   u8 frag_cnt = 1;
-  u32 idx = cpt_hdr->w0.cookie;
+  u32 idx;
 
-  if ((cpt_hdr->w0.num_frags) && !(cpt_hdr->w0.reas_sts))
-    frag_cnt = oct_rx_ipsec_reassembly_success (vm, bt, cpt_hdr, d, b, olen,
-						esp_len, l2_ol3_hdr_size);
-  else if (cpt_hdr->w0.reas_sts)
+  if (fp_flags & OCT_FP_FLAG_O20)
     {
-      frag_cnt = oct_rx_ipsec_reassembly_failure (
-	vm, bt, cpt_hdr, d, buf, next, buffer_next_index, olen, esp_len,
-	l2_ol3_hdr_size, fp_flags);
-      oct_rx_ipsec_update_counters (vm, node, buf, next, buffer_next_index,
-				    *esp_len, frag_cnt, idx, 1);
-      return frag_cnt;
+      idx = cpt_hdr_u->s.w0.cookie;
+    }
+  else
+    {
+      struct cpt_cn10k_parse_hdr_s *cpt_hdr =
+	(struct cpt_cn10k_parse_hdr_s *) cpt_hdr_u;
+
+      idx = cpt_hdr->w0.cookie;
+      if ((cpt_hdr->w0.num_frags) && !(cpt_hdr->w0.reas_sts))
+	frag_cnt = oct_rx_ipsec_reassembly_success (
+	  vm, bt, cpt_hdr, d, b, olen, esp_len, l2_ol3_hdr_size);
+      else if (cpt_hdr->w0.reas_sts)
+	{
+	  frag_cnt = oct_rx_ipsec_reassembly_failure (
+	    vm, bt, cpt_hdr, d, buf, next, buffer_next_index, olen, esp_len,
+	    l2_ol3_hdr_size, fp_flags);
+	  oct_rx_ipsec_update_counters (vm, node, buf, next, buffer_next_index,
+					*esp_len, frag_cnt, idx, 1, fp_flags);
+	  return frag_cnt;
+	}
     }
   oct_rx_ipsec_update_counters (vm, node, buf, next, buffer_next_index,
-				*esp_len, frag_cnt, idx, 0);
+				*esp_len, frag_cnt, idx, 0, fp_flags);
   return frag_cnt;
 }
 
@@ -657,14 +690,29 @@ oct_is_packet_from_cpt (union nix_rx_parse_u *rxp)
 }
 
 static_always_inline uword
-oct_ipsec_is_inl_op_success (struct cpt_cn10k_parse_hdr_s *cpt_hdr)
+oct_ipsec_is_inl_op_success (union cpt_parse_hdr_u *cpt_hdr,
+			     const u64 fp_flags)
 {
-  return (((1U << cpt_hdr->w3.hw_ccode) & CPT_COMP_HWGOOD_MASK) &&
-	  roc_ie_ot_ucc_is_success (cpt_hdr->w3.uc_ccode));
+  if (fp_flags & OCT_FP_FLAG_O20)
+    {
+      u8 hw_ccode = cpt_hdr->s.w3.hw_ccode;
+      u8 uc_ccode = cpt_hdr->s.w3.uc_ccode;
+
+      return (((1U << hw_ccode) & CPT_COMP_HWGOOD_MASK) &&
+	      roc_ie_ow_ucc_is_success (uc_ccode));
+    }
+  else
+    {
+      u8 hw_ccode = cpt_hdr->cn10k.w3.hw_ccode;
+      u8 uc_ccode = cpt_hdr->cn10k.w3.uc_ccode;
+
+      return (((1U << hw_ccode) & CPT_COMP_HWGOOD_MASK) &&
+	      roc_ie_ot_ucc_is_success (uc_ccode));
+    }
 }
 
 static_always_inline u32
-oct_get_len_from_meta (struct cpt_cn10k_parse_hdr_s *cpt_hdr, u64 w0, u64 w4)
+oct_get_len_from_meta (union cpt_parse_hdr_u *cpt_hdr, u64 w0, u64 w4)
 {
   u32 len;
   uintptr_t ip;
@@ -679,20 +727,43 @@ oct_get_len_from_meta (struct cpt_cn10k_parse_hdr_s *cpt_hdr, u64 w0, u64 w4)
 
 static_always_inline void
 oct_rx_ipsec_set_error (vlib_main_t *vm, vlib_node_runtime_t *node,
-			vlib_buffer_t *b, u16 uc_err)
+			vlib_buffer_t *b, union cpt_parse_hdr_u *cpt_hdr,
+			const u64 fp_flags)
 {
-  switch (uc_err)
+  u8 uc_err;
+  if (fp_flags & OCT_FP_FLAG_O20)
     {
-      /* clang-format off */
+      uc_err = cpt_hdr->s.w3.uc_ccode;
+      switch (uc_err)
+	{
+	  /* clang-format off */
+#define _(f, n, s, d)                                               \
+    case ROC_IE_OW_UCC_##f:                                         \
+      b->error = node->errors[OCT_RX_NODE_CTR_##f];                 \
+      break;
+    foreach_octeon_ipsec_ucc;
+#undef _
+	  /* clang-format on */
+	default:
+	  b->error = node->errors[OCT_RX_NODE_CTR_ERR_UNDEFINED];
+	}
+    }
+  else
+    {
+      uc_err = cpt_hdr->cn10k.w3.uc_ccode;
+      switch (uc_err)
+	{
+	  /* clang-format off */
 #define _(f, n, s, d)                                               \
     case ROC_IE_OT_UCC_##f:                                         \
       b->error = node->errors[OCT_RX_NODE_CTR_##f];                 \
       break;
-    foreach_octeon10_ipsec_ucc;
+    foreach_octeon_ipsec_ucc;
 #undef _
       /* clang-format on */
     default:
       b->error = node->errors[OCT_RX_NODE_CTR_ERR_UNDEFINED];
+    }
     }
 }
 
@@ -815,7 +886,7 @@ static_always_inline u32
 oct_rx_inl_ipsec_vlib_from_cq (
   vlib_main_t *vm, vlib_node_runtime_t *node, oct_nix_rx_cqe_desc_t *d,
   vlib_buffer_t **b, oct_rx_node_ctx_t *ctx, vlib_buffer_template_t *bt,
-  struct cpt_cn10k_parse_hdr_s *cpt_hdr, vlib_buffer_t **buffs, u32 *err_flags,
+  union cpt_parse_hdr_u *cpt_hdr, vlib_buffer_t **buffs, u32 *err_flags,
   u16 *next, u16 *buffer_next_index, const u64 fp_flags)
 {
   union nix_rx_parse_u *orig_rxp, *rxp;
@@ -824,8 +895,8 @@ oct_rx_inl_ipsec_vlib_from_cq (
   u8 frag_cnt;
 
   rxp = &d->parse.f;
-  cpt_hdr = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) d) + 9);
-  wqe_ptr = (u64 *) clib_net_to_host_u64 (cpt_hdr->wqe_ptr);
+  cpt_hdr = (union cpt_parse_hdr_u *) *(((u64 *) d) + 9);
+  wqe_ptr = (u64 *) oct_get_wqe_from_cpt_hdr (cpt_hdr, fp_flags);
 
   b[0] = (vlib_buffer_t *) ((u8 *) wqe_ptr - 128);
   orig_rxp = (union nix_rx_parse_u *) (wqe_ptr + 1);
@@ -836,7 +907,7 @@ oct_rx_inl_ipsec_vlib_from_cq (
   b[0]->flow_id = d[0].parse.w[3] >> 48;
   *err_flags |= ((d[0].parse.w[0] >> 20) & 0xFFF);
 
-  is_fail = !oct_ipsec_is_inl_op_success (cpt_hdr);
+  is_fail = !oct_ipsec_is_inl_op_success (cpt_hdr, fp_flags);
 
   buffs[*buffer_next_index] = b[0];
   if (PREDICT_FALSE (is_fail))
@@ -845,7 +916,7 @@ oct_rx_inl_ipsec_vlib_from_cq (
       clib_memcpy_fast (rxp, orig_rxp, sizeof (oct_nix_rx_parse_t));
       next[*buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
       *buffer_next_index = *buffer_next_index + 1;
-      oct_rx_ipsec_set_error (vm, node, b[0], cpt_hdr->w3.uc_ccode);
+      oct_rx_ipsec_set_error (vm, node, b[0], cpt_hdr, fp_flags);
       frag_cnt = 1;
     }
   else
@@ -934,8 +1005,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 b2_err_flags = 0, b3_err_flags = 0;
   u32 n_left, err_flags = 0;
   oct_nix_rx_cqe_desc_t *d = ctx->next_desc;
-  struct cpt_cn10k_parse_hdr_s *cpt_hdr0, *cpt_hdr1;
-  struct cpt_cn10k_parse_hdr_s *cpt_hdr2, *cpt_hdr3;
+  union cpt_parse_hdr_u *cpt_hdr0, *cpt_hdr1;
+  union cpt_parse_hdr_u *cpt_hdr2, *cpt_hdr3;
   union nix_rx_parse_u *rxp0, *rxp1;
   union nix_rx_parse_u *rxp2, *rxp3;
   union nix_rx_parse_u *orig_rxp0, *orig_rxp1;
@@ -1049,15 +1120,15 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       else if (n_from_cpt == 4)
 	{
 	  /* All packets are from cpt */
-	  cpt_hdr0 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
-	  cpt_hdr1 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
-	  cpt_hdr2 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
-	  cpt_hdr3 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
+	  cpt_hdr0 = (union cpt_parse_hdr_u *) *(((u64 *) &d[0]) + 9);
+	  cpt_hdr1 = (union cpt_parse_hdr_u *) *(((u64 *) &d[1]) + 9);
+	  cpt_hdr2 = (union cpt_parse_hdr_u *) *(((u64 *) &d[2]) + 9);
+	  cpt_hdr3 = (union cpt_parse_hdr_u *) *(((u64 *) &d[3]) + 9);
 
-	  wqe_ptr0 = (u64 *) clib_net_to_host_u64 (cpt_hdr0->wqe_ptr);
-	  wqe_ptr1 = (u64 *) clib_net_to_host_u64 (cpt_hdr1->wqe_ptr);
-	  wqe_ptr2 = (u64 *) clib_net_to_host_u64 (cpt_hdr2->wqe_ptr);
-	  wqe_ptr3 = (u64 *) clib_net_to_host_u64 (cpt_hdr3->wqe_ptr);
+	  wqe_ptr0 = (u64 *) oct_get_wqe_from_cpt_hdr (cpt_hdr0, fp_flags);
+	  wqe_ptr1 = (u64 *) oct_get_wqe_from_cpt_hdr (cpt_hdr1, fp_flags);
+	  wqe_ptr2 = (u64 *) oct_get_wqe_from_cpt_hdr (cpt_hdr2, fp_flags);
+	  wqe_ptr3 = (u64 *) oct_get_wqe_from_cpt_hdr (cpt_hdr3, fp_flags);
 
 	  b[0] = (vlib_buffer_t *) ((u8 *) wqe_ptr0 - 128);
 	  b[1] = (vlib_buffer_t *) ((u8 *) wqe_ptr1 - 128);
@@ -1089,10 +1160,10 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  b[2]->template = bt;
 	  b[3]->template = bt;
 
-	  is_fail0 = !oct_ipsec_is_inl_op_success (cpt_hdr0);
-	  is_fail1 = !oct_ipsec_is_inl_op_success (cpt_hdr1);
-	  is_fail2 = !oct_ipsec_is_inl_op_success (cpt_hdr2);
-	  is_fail3 = !oct_ipsec_is_inl_op_success (cpt_hdr3);
+	  is_fail0 = !oct_ipsec_is_inl_op_success (cpt_hdr0, fp_flags);
+	  is_fail1 = !oct_ipsec_is_inl_op_success (cpt_hdr1, fp_flags);
+	  is_fail2 = !oct_ipsec_is_inl_op_success (cpt_hdr2, fp_flags);
+	  is_fail3 = !oct_ipsec_is_inl_op_success (cpt_hdr3, fp_flags);
 	  n_cpt_err = is_fail0 + is_fail1 + is_fail2 + is_fail3;
 
 	  if (PREDICT_TRUE (!n_cpt_err))
@@ -1150,8 +1221,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				    sizeof (oct_nix_rx_parse_t));
 		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
 		  buffer_next_index += 1;
-		  oct_rx_ipsec_set_error (vm, node, b[0],
-					  cpt_hdr0->w3.uc_ccode);
+		  oct_rx_ipsec_set_error (vm, node, b[0], cpt_hdr0, fp_flags);
 		  frag_cnt0 = 1;
 		}
 	      else
@@ -1178,8 +1248,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				    sizeof (oct_nix_rx_parse_t));
 		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
 		  buffer_next_index += 1;
-		  oct_rx_ipsec_set_error (vm, node, b[1],
-					  cpt_hdr1->w3.uc_ccode);
+		  oct_rx_ipsec_set_error (vm, node, b[1], cpt_hdr1, fp_flags);
 		  frag_cnt1 = 1;
 		}
 	      else
@@ -1204,8 +1273,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				    sizeof (oct_nix_rx_parse_t));
 		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
 		  buffer_next_index += 1;
-		  oct_rx_ipsec_set_error (vm, node, b[2],
-					  cpt_hdr2->w3.uc_ccode);
+		  oct_rx_ipsec_set_error (vm, node, b[2], cpt_hdr2, fp_flags);
 		  frag_cnt2 = 1;
 		}
 	      else
@@ -1230,8 +1298,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				    sizeof (oct_nix_rx_parse_t));
 		  next[buffer_next_index] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
 		  buffer_next_index += 1;
-		  oct_rx_ipsec_set_error (vm, node, b[3],
-					  cpt_hdr3->w3.uc_ccode);
+		  oct_rx_ipsec_set_error (vm, node, b[3], cpt_hdr3, fp_flags);
 		  frag_cnt3 = 1;
 		}
 	      else
@@ -1282,8 +1349,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  /* CQ ring contains mix of packets from wire and CPT */
 	  if (is_b0_from_cpt)
 	    {
-	      cpt_hdr0 =
-		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
+	      cpt_hdr0 = (union cpt_parse_hdr_u *) *(((u64 *) &d[0]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
 					     cpt_hdr0, buffs, &err_flags, next,
 					     &buffer_next_index, fp_flags);
@@ -1295,8 +1361,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 
 	  if (is_b1_from_cpt)
 	    {
-	      cpt_hdr1 =
-		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[1]) + 9);
+	      cpt_hdr1 = (union cpt_parse_hdr_u *) *(((u64 *) &d[1]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[1], &b[1], ctx, &bt,
 					     cpt_hdr1, buffs, &err_flags, next,
 					     &buffer_next_index, fp_flags);
@@ -1307,8 +1372,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				 next, &buffer_next_index, fp_flags);
 	  if (is_b2_from_cpt)
 	    {
-	      cpt_hdr2 =
-		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[2]) + 9);
+	      cpt_hdr2 = (union cpt_parse_hdr_u *) *(((u64 *) &d[2]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[2], &b[2], ctx, &bt,
 					     cpt_hdr2, buffs, &err_flags, next,
 					     &buffer_next_index, fp_flags);
@@ -1319,8 +1383,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 				 next, &buffer_next_index, fp_flags);
 	  if (is_b3_from_cpt)
 	    {
-	      cpt_hdr3 =
-		(struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[3]) + 9);
+	      cpt_hdr3 = (union cpt_parse_hdr_u *) *(((u64 *) &d[3]) + 9);
 	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[3], &b[3], ctx, &bt,
 					     cpt_hdr3, buffs, &err_flags, next,
 					     &buffer_next_index, fp_flags);
@@ -1400,7 +1463,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       is_b0_from_cpt = oct_is_packet_from_cpt (&d[0].parse.f);
       if (is_b0_from_cpt)
 	{
-	  cpt_hdr0 = (struct cpt_cn10k_parse_hdr_s *) *(((u64 *) &d[0]) + 9);
+	  cpt_hdr0 = (union cpt_parse_hdr_u *) *(((u64 *) &d[0]) + 9);
 	  oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
 					 cpt_hdr0, buffs, &err_flags, next,
 					 &buffer_next_index, fp_flags);
@@ -1619,7 +1682,7 @@ oct_rx_enq_to_next (vlib_main_t *vm, vlib_node_runtime_t *node,
 static_always_inline uword
 oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    vlib_frame_t *frame, vnet_dev_port_t *port,
-		    vnet_dev_rx_queue_t *rxq, int with_flows)
+		    vnet_dev_rx_queue_t *rxq, int with_flows, const u64 flags)
 {
   vnet_main_t *vnm = vnet_get_main ();
   u32 thr_idx = vlib_get_thread_index ();
@@ -1663,10 +1726,10 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	clib_min (cq_size - head, clib_min (n_desc, ctx->n_left_to_next / 4));
 
       if (PREDICT_TRUE (ctx->trace_count == 0))
-	n_processed += oct_rx_batch (vm, node, ctx, rxq, n, buffs, 0);
+	n_processed += oct_rx_batch (vm, node, ctx, rxq, n, buffs, flags);
       else
-	n_processed +=
-	  oct_rx_batch (vm, node, ctx, rxq, n, buffs, OCT_FP_FLAG_TRACE_EN);
+	n_processed += oct_rx_batch (vm, node, ctx, rxq, n, buffs,
+				     OCT_FP_FLAG_TRACE_EN | flags);
 
       if (n_processed >= 256)
 	break;
@@ -1737,7 +1800,25 @@ VNET_DEV_NODE_FN (oct_rx_node)
       if (!rxq->started)
 	continue;
 
-      n_rx += oct_rx_node_inline (vm, node, frame, port, rxq, 0);
+      n_rx += oct_rx_node_inline (vm, node, frame, port, rxq, 0, 0);
+    }
+
+  return n_rx;
+}
+
+VNET_DEV_NODE_FN (oct_o20_rx_node)
+(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
+{
+  u32 n_rx = 0;
+  foreach_vnet_dev_rx_queue_runtime (rxq, node)
+    {
+      vnet_dev_port_t *port = rxq->port;
+
+      if (!rxq->started)
+	continue;
+
+      n_rx +=
+	oct_rx_node_inline (vm, node, frame, port, rxq, 0, OCT_FP_FLAG_O20);
     }
 
   return n_rx;

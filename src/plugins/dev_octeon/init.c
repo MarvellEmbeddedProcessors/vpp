@@ -30,7 +30,7 @@ VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
 
 vlib_error_desc_t oct_rx_node_counters[] = {
   /* clang-format off */
-  foreach_octeon10_ipsec_ucc
+  foreach_octeon_ipsec_ucc
   foreach_oct_rx_node_counter
   /* clang-format on */
 };
@@ -39,6 +39,12 @@ vlib_error_desc_t oct_tx_node_counters[] = { foreach_oct_tx_node_counter };
 #undef _
 
 vnet_dev_node_t oct_rx_node = {
+  .format_trace = format_oct_rx_trace,
+  .error_counters = oct_rx_node_counters,
+  .n_error_counters = ARRAY_LEN (oct_rx_node_counters),
+};
+
+vnet_dev_node_t oct_o20_rx_node = {
   .format_trace = format_oct_rx_trace,
   .error_counters = oct_rx_node_counters,
   .n_error_counters = ARRAY_LEN (oct_rx_node_counters),
@@ -414,6 +420,9 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 	return rv;
       port_add_args.tx_node = &oct_tx_ipsec_tm_node;
     }
+
+  if (roc_model_is_cn20k ())
+    port_add_args.rx_node = &oct_o20_rx_node;
 
   vnet_dev_set_hw_addr_eth_mac (&port_add_args.port.attr.hw_addr, mac_addr);
 

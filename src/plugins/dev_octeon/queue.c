@@ -171,16 +171,22 @@ oct_rxq_init (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u32 total_sz)
     (0x7 << 4);
 
   log_debug (dev, "RQ %u initialised", crq->cq.qid);
-  /* Configure inline device rq */
-  crq->rq.tag_mask =
-    0x0FF00000 | ((uint32_t) OCT_EVENT_TYPE_FRM_INL_DEV << 28);
-  rrv = roc_nix_inl_dev_rq_get (&crq->rq, 0 /* disable */);
-  if (rrv)
-    {
-      clib_warning ("roc_nix_inl_dev_rq_get failed with '%s' error",
-		    roc_error_msg_get (rrv));
 
-      return -1;
+  if (inl_main->inl_dev)
+    {
+      /* Configure inline device rq */
+      crq->rq.tag_mask =
+	0x0FF00000 | ((uint32_t) OCT_EVENT_TYPE_FRM_INL_DEV << 28);
+      rrv = roc_nix_inl_dev_rq_get (&crq->rq, 0 /* disable */);
+      if (rrv)
+	{
+	  clib_warning ("roc_nix_inl_dev_rq_get failed with '%s' error",
+			roc_error_msg_get (rrv));
+
+	  return -1;
+	}
+      if (!crq->rq.meta_aura_handle && roc_model_is_cn20k ())
+	crq->rq.meta_aura_handle = crq->rq.aura_handle;
     }
 
   return VNET_DEV_OK;
