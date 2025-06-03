@@ -17,7 +17,6 @@
 #include <common.h>
 
 struct roc_model oct_model;
-u32 oct_npa_max_pools = OCT_NPA_MAX_POOLS;
 oct_main_t oct_main;
 extern oct_inl_dev_main_t oct_inl_dev_main;
 
@@ -82,6 +81,22 @@ static struct
   _ (0xa0f1, RVU_INL_VF,
      "Marvell Octeon Resource Virtualization Unit Inline Device VF"),
 #undef _
+};
+
+static vnet_dev_arg_t oct_drv_args[] = {
+  {
+    .id = OCT_DRV_ARG_NPA_MAX_POOLS,
+    .name = "npa_max_pools",
+    .desc = "Max NPA pools",
+    .type = VNET_DEV_ARG_TYPE_UINT32,
+    .default_val.uint32 = 128,
+  },
+  {
+    .id = OCT_DRV_ARG_END,
+    .name = "end",
+    .desc = "Argument end",
+    .type = VNET_DEV_ARG_END,
+  },
 };
 
 static vnet_dev_arg_t oct_port_args[] = {
@@ -191,6 +206,42 @@ cnx_return_roc_err (vnet_dev_t *dev, int rrv, char *fmt, ...)
   vec_free (s);
 
   return VNET_DEV_ERR_UNSUPPORTED_DEVICE;
+}
+
+static vnet_dev_rv_t
+oct_config_args (vlib_main_t *vm, vnet_dev_driver_t *drv)
+{
+  if (!oct_main.is_config_done)
+    {
+      foreach_vnet_dev_port_args (arg, drv)
+	{
+	  if (arg->id == OCT_DRV_ARG_NPA_MAX_POOLS &&
+	      vnet_dev_arg_get_uint32 (arg))
+	    {
+	      oct_main.npa_max_pools = vnet_dev_arg_get_uint32 (arg);
+
+	      if (oct_main.npa_max_pools < 128 ||
+		  (oct_main.npa_max_pools > BIT_ULL (20)))
+		{
+		  log_err (
+		    NULL,
+		    "Invalid max-pools value (%u), should be in range of "
+		    "(128 - %u)\n",
+		    oct_main.npa_max_pools, BIT_ULL (20));
+		  return VNET_DEV_ERR_UNSUPPORTED_CONFIG;
+		}
+	    }
+	}
+      oct_main.is_config_done = 1;
+    }
+  else
+    {
+      log_err (NULL, "Driver config arguments are already initialized or "
+		     "devices are already initialized");
+      return VNET_DEV_ERR_UNSUPPORTED_CONFIG;
+    }
+
+  return 0;
 }
 
 static vnet_dev_rv_t
@@ -550,6 +601,13 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
   vlib_pci_config_hdr_t pci_hdr;
   vnet_dev_rv_t rv;
 
+  /*
+   * Drivers config arguments should be initialized by this time
+   * otherwise don't allow to set after device init
+   */
+  if (!oct_main.is_config_done)
+    oct_main.is_config_done = 1;
+
   rv = vnet_dev_pci_read_config_header (vm, dev, &pci_hdr);
   if (rv != VNET_DEV_OK)
     return rv;
@@ -648,6 +706,7 @@ VNET_DEV_REGISTER_DRIVER (octeon) = {
   .bus = "pci",
   .device_data_sz = sizeof (oct_device_t),
   .ops = {
+    .config_args = oct_config_args,
     .alloc = oct_alloc,
     .init = oct_init,
     .deinit = oct_deinit,
@@ -655,12 +714,13 @@ VNET_DEV_REGISTER_DRIVER (octeon) = {
     .probe = oct_probe,
   },
   .args = oct_dev_args,
+  .drv_args = oct_drv_args,
 };
 
 static int
 oct_npa_max_pools_set_cb (struct plt_pci_device *pci_dev)
 {
-  roc_idev_npa_maxpools_set (oct_npa_max_pools);
+  roc_idev_npa_maxpools_set (oct_main.npa_max_pools);
   return 0;
 }
 
@@ -685,6 +745,11 @@ oct_plugin_init (vlib_main_t *vm)
   if (!roc_model_is_cn10k ())
     return clib_error_return (0, "OCTEON model is not OCTEON10");
 #endif
+
+  roc_npa_lf_init_cb_register (oct_npa_max_pools_set_cb);
+
+  /* set default values in oct_main */
+  oct_main.npa_max_pools = OCT_NPA_MAX_POOLS;
 
   roc_npa_lf_init_cb_register (oct_npa_max_pools_set_cb);
 
@@ -714,8 +779,6 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
 
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
-      if (unformat (line_input, "max-pools %u", &oct_npa_max_pools))
-	;
       if (unformat (line_input, "disable-single-rx-aura"))
 	oct_main.use_single_rx_aura = 0;
       else if (unformat (line_input, "ipsec_in_min_spi %u",
@@ -735,10 +798,6 @@ oct_early_config (vlib_main_t *vm, unformat_input_t *input)
 	}
     }
 
-  if (oct_npa_max_pools < 128 || (oct_npa_max_pools > BIT_ULL (20)))
-    error = clib_error_return (
-      0, "Invalid max-pools value (%u), should be in range of (128 - %u)\n",
-      oct_npa_max_pools, BIT_ULL (20));
 done:
   unformat_free (line_input);
   return error;

@@ -25,13 +25,19 @@
 #define OCT_FRAME_SIZE (VLIB_FRAME_SIZE * 4)
 #define OCT_EXT_HDR_SIZE                                                      \
   PLT_ALIGN (sizeof (oct_ipsec_outbound_pkt_meta_t), ROC_ALIGN)
-#define OCT_NPA_MAX_POOLS	   8192
+#define OCT_NPA_MAX_POOLS	   128
 #define OCT_BATCH_ALLOC_IOVA0_MASK 0xFFFFFFFFFFFFFF80
 
 typedef enum
 {
-  OCT_PORT_ARG_ALLMULTI_MODE = 1,
-  OCT_PORT_ARG_EN_ETH_PAUSE_FRAME,
+  OCT_DRV_ARG_NPA_MAX_POOLS = 1,
+  OCT_DRV_ARG_END,
+} oct_drv_args_t;
+
+typedef enum
+{
+  OCT_PORT_ARG_EN_ETH_PAUSE_FRAME = 1,
+  OCT_PORT_ARG_ALLMULTI_MODE,
   OCT_PORT_ARG_SWITCH_HDR_TYPE,
   OCT_PORT_ARG_END
 } oct_port_args_t;
@@ -161,10 +167,12 @@ typedef struct
 
 typedef struct
 {
-  oct_device_t **oct_dev;
   u8 inl_dev_initialized : 1;
   u8 use_single_rx_aura : 1;
+  u8 is_config_done;
+  u32 npa_max_pools;
   u64 rx_aura_handle;
+  oct_device_t **oct_dev;
 } oct_main_t;
 
 extern oct_main_t oct_main;
