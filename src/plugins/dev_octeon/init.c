@@ -93,6 +93,34 @@ static vnet_dev_arg_t oct_drv_args[] = {
     .default_val.uint32 = 128,
   },
   {
+    .id = OCT_DRV_ARG_USE_SINGLE_RX_AURA,
+    .name = "use_single_rx_aura",
+    .desc = "Use single rx aura",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = true,
+  },
+  {
+    .id = OCT_DRV_ARG_IPSEC_IN_MIN_SPI,
+    .name = "ipsec_in_min_spi",
+    .desc = "Inline IPsec inbound minimum spi value",
+    .type = VNET_DEV_ARG_TYPE_UINT32,
+    .default_val.uint32 = 0,
+  },
+  {
+    .id = OCT_DRV_ARG_IPSEC_IN_MAX_SPI,
+    .name = "ipsec_in_max_spi",
+    .desc = "Inline IPsec inbound maximum spi value",
+    .type = VNET_DEV_ARG_TYPE_UINT32,
+    .default_val.uint32 = 8192,
+  },
+  {
+    .id = OCT_DRV_ARG_IPSEC_OUT_MAX_SA,
+    .name = "ipsec_out_max_sa",
+    .desc = "Inline IPsec outbound maximum sa",
+    .type = VNET_DEV_ARG_TYPE_UINT32,
+    .default_val.uint32 = 8192,
+  },
+  {
     .id = OCT_DRV_ARG_END,
     .name = "end",
     .desc = "Argument end",
@@ -215,8 +243,10 @@ oct_config_args (vlib_main_t *vm, vnet_dev_driver_t *drv)
     {
       foreach_vnet_dev_port_args (arg, drv)
 	{
-	  if (arg->id == OCT_DRV_ARG_NPA_MAX_POOLS &&
-	      vnet_dev_arg_get_uint32 (arg))
+	  if (!arg->val_set)
+	    continue;
+
+	  if (arg->id == OCT_DRV_ARG_NPA_MAX_POOLS)
 	    {
 	      oct_main.npa_max_pools = vnet_dev_arg_get_uint32 (arg);
 
@@ -231,6 +261,18 @@ oct_config_args (vlib_main_t *vm, vnet_dev_driver_t *drv)
 		  return VNET_DEV_ERR_UNSUPPORTED_CONFIG;
 		}
 	    }
+
+	  if (arg->id == OCT_DRV_ARG_USE_SINGLE_RX_AURA)
+	    oct_main.use_single_rx_aura = vnet_dev_arg_get_bool (arg);
+
+	  if (arg->id == OCT_DRV_ARG_IPSEC_IN_MIN_SPI)
+	    oct_inl_dev_main.in_min_spi = vnet_dev_arg_get_uint32 (arg);
+
+	  if (arg->id == OCT_DRV_ARG_IPSEC_IN_MAX_SPI)
+	    oct_inl_dev_main.in_max_spi = vnet_dev_arg_get_uint32 (arg);
+
+	  if (arg->id == OCT_DRV_ARG_IPSEC_OUT_MAX_SA)
+	    oct_inl_dev_main.out_max_sa = vnet_dev_arg_get_uint32 (arg);
 	}
       oct_main.is_config_done = 1;
     }
@@ -738,6 +780,10 @@ oct_plugin_init (vlib_main_t *vm)
 
   /* set default values in oct_main */
   oct_main.npa_max_pools = OCT_NPA_MAX_POOLS;
+  oct_main.use_single_rx_aura = 1;
+  oct_inl_dev_main.in_min_spi = 0;
+  oct_inl_dev_main.in_max_spi = 8192;
+  oct_inl_dev_main.out_max_sa = 8192;
 
   roc_npa_lf_init_cb_register (oct_npa_max_pools_set_cb);
 
@@ -751,45 +797,4 @@ VLIB_PLUGIN_REGISTER () = {
   .description = "dev_octeon",
 };
 
-static clib_error_t *
-oct_early_config (vlib_main_t *vm, unformat_input_t *input)
-{
-  unformat_input_t _line_input, *line_input = &_line_input;
-  clib_error_t *error = 0;
-
-  oct_main.use_single_rx_aura = 1;
-  oct_inl_dev_main.in_min_spi = 0;
-  oct_inl_dev_main.in_max_spi = 8192;
-  oct_inl_dev_main.out_max_sa = 8192;
-
-  if (!unformat_user (input, unformat_line_input, line_input))
-    return 0;
-
-  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (line_input, "disable-single-rx-aura"))
-	oct_main.use_single_rx_aura = 0;
-      else if (unformat (line_input, "ipsec_in_min_spi %u",
-			 &oct_inl_dev_main.in_min_spi))
-	;
-      else if (unformat (line_input, "ipsec_in_max_spi %u",
-			 &oct_inl_dev_main.in_max_spi))
-	;
-      else if (unformat (line_input, "ipsec_out_max_sa %u",
-			 &oct_inl_dev_main.out_max_sa))
-	;
-      else
-	{
-	  error = clib_error_return (0, "unknown input '%U'",
-				     format_unformat_error, line_input);
-	  goto done;
-	}
-    }
-
-done:
-  unformat_free (line_input);
-  return error;
-}
-
-VLIB_EARLY_CONFIG_FUNCTION (oct_early_config, "dev_octeon");
 VLIB_BUFFER_SET_EXT_HDR_SIZE (OCT_EXT_HDR_SIZE);
