@@ -94,6 +94,7 @@ typedef struct __attribute__ ((packed))
 typedef struct __attribute__ ((packed))
 {
   memif_region_index_t index;
+  uint16_t is_external;
   memif_region_size_t size;
 } memif_msg_add_region_t;
 

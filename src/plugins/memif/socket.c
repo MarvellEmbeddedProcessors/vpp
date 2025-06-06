@@ -138,6 +138,7 @@ memif_msg_enq_add_region (memif_if_t * mif, u8 region)
   e->msg.type = MEMIF_MSG_TYPE_ADD_REGION;
   e->fd = mif->regions[region].fd;
   ar->index = region;
+  ar->is_external = mif->regions[region].is_external;
   ar->size = mif->regions[region].region_size;
 }
 
@@ -321,6 +322,7 @@ memif_msg_receive_add_region (memif_if_t * mif, memif_msg_t * msg, int fd)
   mr = vec_elt_at_index (mif->regions, ar->index);
   mr->fd = fd;
   mr->region_size = ar->size;
+  mr->is_external = ar->is_external;
 
   return 0;
 }

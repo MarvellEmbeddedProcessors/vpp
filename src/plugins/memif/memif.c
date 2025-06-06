@@ -279,6 +279,15 @@ memif_connect (memif_if_t * mif)
 	  err = clib_error_return_unix (0, "mmap");
 	  goto error;
 	}
+
+      if (mr->is_external && (mif->flags & MEMIF_IF_FLAG_USE_DMA))
+	{
+	  if (vlib_dma_map_physmem (vm, mif->dma_input_config, mr->shm))
+      {
+	err = clib_error_return (0, "failed to map");
+	goto error;
+      }
+	}
     }
 
   template.read_function = memif_int_fd_read_ready;

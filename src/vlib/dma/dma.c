@@ -63,6 +63,19 @@ vlib_dma_config_del (vlib_main_t *vm, u32 config_index)
   dma_log_info ("config %u deleted from backend %s", config_index, b->name);
 }
 
+int
+vlib_dma_map_physmem (vlib_main_t *vm, u32 config_index, void *addr)
+{
+  vlib_dma_main_t *dm = &vlib_dma_main;
+  vlib_dma_config_data_t *cd = pool_elt_at_index (dm->configs, config_index);
+  vlib_dma_backend_t *b = vec_elt_at_index (dm->backends, cd->backend_index);
+
+  if (b->map_physmem_fn)
+    return b->map_physmem_fn (vm, addr);
+
+  return 0;
+}
+
 u8 *
 vlib_dma_config_info (u8 *s, va_list *args)
 {

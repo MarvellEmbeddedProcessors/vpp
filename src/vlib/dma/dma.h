@@ -21,6 +21,7 @@ typedef int (vlib_dma_config_add_fn) (vlib_main_t *vm,
 				      struct vlib_dma_config_data *cfg);
 typedef void (vlib_dma_config_del_fn) (vlib_main_t *vm,
 				       struct vlib_dma_config_data *cfg);
+typedef int (vlib_dma_map_physmem_fn) (vlib_main_t *vm, void *add);
 typedef struct vlib_dma_batch *(vlib_dma_batch_new_fn) (
   vlib_main_t *vm, struct vlib_dma_config_data *);
 typedef int (vlib_dma_batch_submit_fn) (vlib_main_t *vm,
@@ -61,6 +62,7 @@ typedef struct
   char *name;
   vlib_dma_config_add_fn *config_add_fn;
   vlib_dma_config_del_fn *config_del_fn;
+  vlib_dma_map_physmem_fn *map_physmem_fn;
   format_function_t *info_fn;
 } vlib_dma_backend_t;
 
@@ -86,6 +88,7 @@ clib_error_t *vlib_dma_register_backend (vlib_main_t *vm,
 
 int vlib_dma_config_add (vlib_main_t *vm, vlib_dma_config_t *b);
 void vlib_dma_config_del (vlib_main_t *vm, u32 config_index);
+int vlib_dma_map_physmem (vlib_main_t *vm, u32 config_index, void *addr);
 u8 *vlib_dma_config_info (u8 *s, va_list *args);
 
 static_always_inline vlib_dma_batch_t *

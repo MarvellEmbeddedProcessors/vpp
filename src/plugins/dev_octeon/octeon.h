@@ -21,6 +21,7 @@
 #include <base/roc_api.h>
 #include <dev_octeon/hw_defs.h>
 #include <dev_octeon/ipsec.h>
+#include <dev_octeon/dma.h>
 
 #define OCT_FRAME_SIZE (VLIB_FRAME_SIZE * 4)
 #define OCT_EXT_HDR_SIZE                                                      \
@@ -65,6 +66,7 @@ typedef enum
   OCT_DEVICE_TYPE_O9K_CPT_VF,
   OCT_DEVICE_TYPE_RVU_INL_PF,
   OCT_DEVICE_TYPE_RVU_INL_VF,
+  OCT_DEVICE_TYPE_DPI_VF,
 } __clib_packed oct_device_type_t;
 
 #define OCT_DEVTYPE_IS_VF(type)                                               \

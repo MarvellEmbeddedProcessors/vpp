@@ -12,13 +12,17 @@
 #include <dev_octeon/octeon.h>
 #include <dev_octeon/crypto.h>
 #include <dev_octeon/ipsec.h>
+#include <dev_octeon/dma.h>
 
 #include <base/roc_api.h>
 #include <common.h>
 
 struct roc_model oct_model;
 oct_main_t oct_main;
+extern oct_dma_main_t oct_dma_main;
+extern oct_crypto_main_t oct_crypto_main;
 extern oct_inl_dev_main_t oct_inl_dev_main;
+extern oct_plt_init_param_t oct_plt_init_param;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
@@ -86,6 +90,8 @@ static struct
      "Marvell Octeon Resource Virtualization Unit Inline Device PF"),
   _ (0xa0f1, RVU_INL_VF,
      "Marvell Octeon Resource Virtualization Unit Inline Device VF"),
+  _ (0xa081, DPI_VF,
+     "Marvell Octeon Resource Virtualization Unit DPI/DMA Device VF"),
 #undef _
 };
 
@@ -534,7 +540,6 @@ oct_conf_cpt_queue (vlib_main_t *vm, vnet_dev_t *dev, oct_crypto_dev_t *ocd)
 static vnet_dev_rv_t
 oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
 {
-  extern oct_plt_init_param_t oct_plt_init_param;
   oct_device_t *od = vnet_dev_get_data (dev);
   oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
   vnet_dev_rv_t rv;
@@ -566,10 +571,47 @@ oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
 }
 
 static vnet_dev_rv_t
+oct_init_dpi (vlib_main_t *vm, vnet_dev_t *dev)
+{
+  oct_dma_main_t *dm = &oct_dma_main;
+  oct_dma_dev_t *odma = NULL;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  vnet_dev_rv_t rv;
+  int rrv;
+
+  if (dm->n_dmadev == OCT_MAX_N_DMA_DEV || dm->started)
+    return VNET_DEV_ERR_NOT_SUPPORTED;
+
+  odma = oct_plt_init_param.oct_plt_zmalloc (sizeof (oct_dma_dev_t),
+					     CLIB_CACHE_LINE_BYTES);
+  odma->dev = dev;
+  odma->rdpi.pci_dev = &cd->plt_pci_dev;
+
+  if ((rrv = roc_dpi_dev_init (&odma->rdpi, 0)))
+    return cnx_return_roc_err (dev, rrv, "roc_dpi_dev_init");
+
+  if ((rv = oct_dma_dev_start (odma)))
+    return VNET_DEV_ERR_INTERNAL;
+
+  if (!dm->n_dmadev)
+    {
+      if ((rv = oct_init_dma_backend (vm, dev)))
+	return rv;
+      vec_validate (dm->dmadevs, OCT_MAX_N_DMA_DEV);
+    }
+
+  dm->dmadevs[dm->n_dmadev] = odma;
+  dm->n_dmadev++;
+
+  oct_dma_assign_dmadevs (vm);
+
+  return VNET_DEV_OK;
+}
+
+static vnet_dev_rv_t
 oct_init_cpt (vlib_main_t *vm, vnet_dev_t *dev)
 {
   oct_crypto_main_t *ocm = &oct_crypto_main;
-  extern oct_plt_init_param_t oct_plt_init_param;
   oct_device_t *cd = vnet_dev_get_data (dev);
   oct_crypto_dev_t *ocd = NULL;
   u32 n_desc;
@@ -662,7 +704,17 @@ oct_is_nix_bar_mappable (vnet_dev_t *dev, u32 bar)
    * +-----+-------+-------+--------+
    */
 
-  if (bar == 2)
+  if (cd->type == OCT_DEVICE_TYPE_DPI_VF)
+    {
+      if (bar == 2)
+	return false;
+      else
+	return true;
+    }
+  if (bar == 0)
+    return false;
+
+  if (bar == 2 && cd->type != OCT_DEVICE_TYPE_DPI_VF)
     return true;
 
   if (roc_model_is_cn20k ())
@@ -679,6 +731,7 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
 {
   oct_device_t *cd = vnet_dev_get_data (dev);
   vlib_pci_config_hdr_t pci_hdr;
+  vlib_pci_addr_t pci_addr;
   vnet_dev_rv_t rv;
 
   /*
@@ -706,15 +759,21 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
 
   rv = VNET_DEV_ERR_UNSUPPORTED_DEVICE;
 
+  pci_addr = vnet_dev_get_pci_addr (dev);
+
   cd->plt_pci_dev = (struct plt_pci_device){
     .id.vendor_id = pci_hdr.vendor_id,
     .id.device_id = pci_hdr.device_id,
     .id.class_id = pci_hdr.class << 16 | pci_hdr.subclass,
     .pci_handle = vnet_dev_get_pci_handle (dev),
+    .addr.domain = pci_addr.domain,
+    .addr.bus = pci_addr.bus,
+    .addr.devid = pci_addr.slot,
+    .addr.function = pci_addr.function,
   };
   cd->msix_handler = NULL;
 
-  foreach_int (i, 2, 4)
+  foreach_int (i, 0, 2, 4)
     {
       if (oct_is_nix_bar_mappable (dev, i))
 	{
@@ -755,6 +814,9 @@ oct_init (vlib_main_t *vm, vnet_dev_t *dev)
     case OCT_DEVICE_TYPE_RVU_INL_PF:
     case OCT_DEVICE_TYPE_RVU_INL_VF:
       return oct_init_inl_dev (vm, dev);
+
+    case OCT_DEVICE_TYPE_DPI_VF:
+      return oct_init_dpi (vm, dev);
 
     default:
       return VNET_DEV_ERR_UNSUPPORTED_DEVICE;

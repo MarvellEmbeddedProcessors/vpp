@@ -342,6 +342,13 @@ oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  vlib_cli_output (vm, "\n");
 	}
     }
+
+  if (oct_dma_main.dmadevs[0]->aura_handle)
+    vlib_cli_output (
+      vm, "dma cmd queue aura 0x%llx avl_count %llu\n\n",
+      oct_dma_main.dmadevs[0]->aura_handle,
+      roc_npa_aura_op_available (oct_dma_main.dmadevs[0]->aura_handle));
+
   return 0;
 }
 
