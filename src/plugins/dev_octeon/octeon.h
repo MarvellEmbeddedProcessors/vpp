@@ -252,6 +252,7 @@ vnet_dev_rv_t oct_txq_get_stats (vlib_main_t *, vnet_dev_port_t *,
 	    format_vnet_dev_addr, (dev), ##__VA_ARGS__)
 
 #define foreach_oct_rx_node_counter                                           \
+  _ (ERR_NO_TUNNEL, err_no_tunnel, ERROR, "no matching IPsec tunnel")         \
   _ (ERR_UNDEFINED, err_undefined, ERROR, "undefined decrypt error")
 
 /* clang-format off */
