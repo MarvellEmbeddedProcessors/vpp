@@ -498,25 +498,6 @@ oct_rx_ipsec_reassembly_failure (vlib_main_t *vm, vlib_buffer_template_t *bt,
   return frag_cnt;
 }
 
-static_always_inline u8
-oct_rx_ipsec_reassembly (vlib_main_t *vm, vlib_buffer_template_t *bt,
-			 struct cpt_cn10k_parse_hdr_s *cpt_hdr,
-			 oct_nix_rx_cqe_desc_t *d, vlib_buffer_t *b,
-			 vlib_buffer_t **buf, u16 *next,
-			 u16 *buffer_next_index, u32 *olen, u32 *esp_len,
-			 u32 l2_ol3_hdr_size, const u64 fp_flags)
-{
-  if ((cpt_hdr->w0.num_frags) && !(cpt_hdr->w0.reas_sts))
-    return oct_rx_ipsec_reassembly_success (vm, bt, cpt_hdr, d, b, olen,
-					    esp_len, l2_ol3_hdr_size);
-  else if (cpt_hdr->w0.reas_sts)
-    return oct_rx_ipsec_reassembly_failure (vm, bt, cpt_hdr, d, buf, next,
-					    buffer_next_index, olen, esp_len,
-					    l2_ol3_hdr_size, fp_flags);
-  else
-    return 1;
-}
-
 static_always_inline u32
 oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
 {
@@ -542,7 +523,8 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
       ipsec4_tunnel_mk_key (key40, &ip_addr->ip.ip4,
 			    clib_host_to_net_u32 (sa->spi));
       rv = clib_bihash_search_inline_8_16 (&ipm->tun4_protect_by_key, &bkey40);
-      ASSERT (!rv);
+      if (PREDICT_FALSE (rv))
+	return ~0;
 
       res = (ipsec_tun_lkup_result_t *) &bkey40.value;
     }
@@ -556,7 +538,8 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
 
       rv =
 	clib_bihash_search_inline_24_16 (&ipm->tun6_protect_by_key, &bkey60);
-      ASSERT (!rv);
+      if (PREDICT_FALSE (rv))
+	return ~0;
 
       res = (ipsec_tun_lkup_result_t *) &bkey60.value;
     }
@@ -569,181 +552,23 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
 }
 
 static_always_inline void
-oct_rx_ipsec_update_sa_counters_x4 (vlib_main_t *vm, vlib_buffer_t *b0,
-				    vlib_buffer_t *b1, vlib_buffer_t *b2,
-				    vlib_buffer_t *b3, u32 ilen, u8 frag_cnt,
-				    u32 oct_sa_idx)
-{
-  vlib_combined_counter_main_t *rx_counter;
-  ipsec_main_t *im = &ipsec_main;
-  oct_ipsec_session_t *session;
-  struct roc_ot_ipsec_inb_sa *roc_sa;
-  vnet_interface_main_t *vim;
-  oct_ipsec_main_t *oim = &oct_ipsec_main;
-  oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
-  oct_ipsec_inb_sa_priv_data_t *inb_sa_priv;
-  u32 sa_idx, itf_sw_idx;
-  vnet_main_t *vnm;
-
-  vnm = im->vnet_main;
-  vim = &vnm->interface_main;
-  rx_counter = vim->combined_sw_if_counters + VNET_INTERFACE_COUNTER_RX;
-
-  roc_sa = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, oct_sa_idx);
-  inb_sa_priv = roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa);
-
-  sa_idx = (u32) inb_sa_priv->user_data;
-
-  vnet_buffer (b0)->ipsec.sad_index = sa_idx;
-  vnet_buffer (b1)->ipsec.sad_index = sa_idx;
-  vnet_buffer (b2)->ipsec.sad_index = sa_idx;
-  vnet_buffer (b3)->ipsec.sad_index = sa_idx;
-
-  ASSERT (sa_idx < vec_len (oim->inline_ipsec_sessions));
-
-  session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_idx);
-  itf_sw_idx = session->itf_sw_idx;
-  /*
-   * Check if itf_sw_idx is populated already. First packet on the SA
-   * populates the itf_sw_idx in the SA session
-   */
-  if (PREDICT_FALSE (itf_sw_idx == ~0))
-    itf_sw_idx = oct_ipsec_update_itf_sw_idx (session, sa_idx);
-
-  /* Update IPsec counters with inner IP length */
-  vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
-				   sa_idx, frag_cnt, ilen);
-
-  /* Update ITF counters with inner IP length */
-  vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx,
-				   frag_cnt, ilen);
-}
-static_always_inline void
-oct_rx_ipsec_update_counters_x4 (vlib_main_t *vm, vlib_buffer_t *b0, u32 ilen0,
-				 u8 frag_cnt0, u32 idx0, vlib_buffer_t *b1,
-				 u32 ilen1, u8 frag_cnt1, u32 idx1,
-				 vlib_buffer_t *b2, u32 ilen2, u8 frag_cnt2,
-				 u32 idx2, vlib_buffer_t *b3, u32 ilen3,
-				 u8 frag_cnt3, u32 idx3)
-{
-  vlib_combined_counter_main_t *rx_counter;
-  oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
-  oct_ipsec_main_t *oim = &oct_ipsec_main;
-  struct roc_ot_ipsec_inb_sa *roc_sa0, *roc_sa1;
-  struct roc_ot_ipsec_inb_sa *roc_sa2, *roc_sa3;
-  oct_ipsec_inb_sa_priv_data_t *inb_sa_priv;
-  ipsec_main_t *im = &ipsec_main;
-  oct_ipsec_session_t *session;
-  vnet_interface_main_t *vim;
-  u32 sa_idx0, itf_sw_idx0;
-  u32 sa_idx1, itf_sw_idx1;
-  u32 sa_idx2, itf_sw_idx2;
-  u32 sa_idx3, itf_sw_idx3;
-  vnet_main_t *vnm;
-  u32 idx_xor;
-
-  idx_xor = idx0 ^ idx1;
-  idx_xor += idx1 ^ idx2;
-  idx_xor += idx2 ^ idx3;
-
-  if (!idx_xor)
-    {
-      oct_rx_ipsec_update_sa_counters_x4 (
-	vm, b0, b1, b2, b3, ilen0 + ilen1 + ilen2 + ilen3,
-	frag_cnt0 + frag_cnt1 + frag_cnt2 + frag_cnt3, idx0);
-      return;
-    }
-
-  vnm = im->vnet_main;
-  vim = &vnm->interface_main;
-  rx_counter = vim->combined_sw_if_counters + VNET_INTERFACE_COUNTER_RX;
-
-  roc_sa0 = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, idx0);
-  inb_sa_priv = roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa0);
-
-  sa_idx0 = (u32) inb_sa_priv->user_data;
-  vnet_buffer (b0)->ipsec.sad_index = sa_idx0;
-
-  roc_sa1 = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, idx1);
-  inb_sa_priv = roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa1);
-
-  sa_idx1 = (u32) inb_sa_priv->user_data;
-  vnet_buffer (b1)->ipsec.sad_index = sa_idx1;
-
-  roc_sa2 = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, idx2);
-  inb_sa_priv = roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa2);
-
-  sa_idx2 = (u32) inb_sa_priv->user_data;
-  vnet_buffer (b2)->ipsec.sad_index = sa_idx2;
-
-  roc_sa3 = roc_nix_inl_ot_ipsec_inb_sa (oidm->inb_sa_base, idx3);
-  inb_sa_priv = roc_nix_inl_ot_ipsec_inb_sa_sw_rsvd (roc_sa3);
-
-  sa_idx3 = (u32) inb_sa_priv->user_data;
-  vnet_buffer (b3)->ipsec.sad_index = sa_idx3;
-
-  ASSERT (sa_idx0 < vec_len (oim->inline_ipsec_sessions));
-  ASSERT (sa_idx1 < vec_len (oim->inline_ipsec_sessions));
-  ASSERT (sa_idx2 < vec_len (oim->inline_ipsec_sessions));
-  ASSERT (sa_idx3 < vec_len (oim->inline_ipsec_sessions));
-
-  session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_idx0);
-  itf_sw_idx0 = session->itf_sw_idx;
-  /* Check if itf_sw_idx is populated already. First packet on the SA
-     populates the itf_sw_idx in the SA session */
-  if (PREDICT_FALSE (itf_sw_idx0 == ~0))
-    itf_sw_idx0 = oct_ipsec_update_itf_sw_idx (session, sa_idx0);
-
-  session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_idx1);
-  itf_sw_idx1 = session->itf_sw_idx;
-  if (PREDICT_FALSE (itf_sw_idx1 == ~0))
-    itf_sw_idx1 = oct_ipsec_update_itf_sw_idx (session, sa_idx1);
-
-  session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_idx2);
-  itf_sw_idx2 = session->itf_sw_idx;
-  if (PREDICT_FALSE (itf_sw_idx2 == ~0))
-    itf_sw_idx2 = oct_ipsec_update_itf_sw_idx (session, sa_idx2);
-
-  session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_idx3);
-  itf_sw_idx3 = session->itf_sw_idx;
-  if (PREDICT_FALSE (itf_sw_idx3 == ~0))
-    itf_sw_idx3 = oct_ipsec_update_itf_sw_idx (session, sa_idx3);
-
-  /* Update IPsec counters with outer IP length */
-  vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
-				   sa_idx0, frag_cnt0, ilen0);
-  vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
-				   sa_idx1, frag_cnt1, ilen1);
-  vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
-				   sa_idx2, frag_cnt2, ilen2);
-  vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
-				   sa_idx3, frag_cnt3, ilen3);
-
-  /* Update ITF counters with inner IP length */
-  vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx0,
-				   frag_cnt0, ilen0);
-  vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx1,
-				   frag_cnt1, ilen1);
-  vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx2,
-				   frag_cnt2, ilen2);
-  vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx3,
-				   frag_cnt3, ilen3);
-}
-
-static_always_inline void
-oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_buffer_t *b, u32 ilen,
-			      u8 frag_cnt, u32 idx)
+oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_node_runtime_t *node,
+			      vlib_buffer_t **buffs, u16 *next,
+			      u16 *buffer_next_index, u32 ilen, u8 frag_cnt,
+			      u32 idx, const u8 reass_fail)
 {
   vlib_combined_counter_main_t *rx_counter;
   ipsec_main_t *im = &ipsec_main;
   oct_ipsec_session_t *session;
   struct roc_ot_ipsec_inb_sa *roc_sa;
   oct_ipsec_inb_sa_priv_data_t *inb_sa_priv;
+  vlib_buffer_t *b = buffs[*buffer_next_index - 1];
   u32 sa_idx, itf_sw_idx;
   vnet_interface_main_t *vim;
   oct_ipsec_main_t *oim = &oct_ipsec_main;
   oct_inl_dev_main_t *oidm = &oct_inl_dev_main;
   vnet_main_t *vnm;
+  int i;
 
   vnm = im->vnet_main;
   vim = &vnm->interface_main;
@@ -770,9 +595,55 @@ oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_buffer_t *b, u32 ilen,
   vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
 				   sa_idx, frag_cnt, ilen);
 
-  /* Update ITF counters with inner IP length */
-  vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx,
-				   frag_cnt, ilen);
+  if (PREDICT_FALSE (itf_sw_idx == ~0))
+    {
+      b->error = node->errors[OCT_RX_NODE_CTR_ERR_NO_TUNNEL];
+      next[*buffer_next_index - 1] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+
+      if (reass_fail)
+	{
+	  for (i = frag_cnt; i > 1; i--)
+	    {
+	      buffs[*buffer_next_index - frag_cnt]->error =
+		node->errors[OCT_RX_NODE_CTR_ERR_NO_TUNNEL];
+	      next[*buffer_next_index - frag_cnt] =
+		VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+	    }
+	}
+    }
+  else
+    /* Update ITF counters with inner IP length */
+    vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx,
+				     frag_cnt, ilen);
+}
+
+static_always_inline u8
+oct_rx_ipsec_reassembly (vlib_main_t *vm, vlib_node_runtime_t *node,
+			 vlib_buffer_template_t *bt,
+			 struct cpt_cn10k_parse_hdr_s *cpt_hdr,
+			 oct_nix_rx_cqe_desc_t *d, vlib_buffer_t *b,
+			 vlib_buffer_t **buf, u16 *next,
+			 u16 *buffer_next_index, u32 *olen, u32 *esp_len,
+			 u32 l2_ol3_hdr_size, const u64 fp_flags)
+{
+  u8 frag_cnt = 1;
+  u32 idx = cpt_hdr->w0.cookie;
+
+  if ((cpt_hdr->w0.num_frags) && !(cpt_hdr->w0.reas_sts))
+    frag_cnt = oct_rx_ipsec_reassembly_success (vm, bt, cpt_hdr, d, b, olen,
+						esp_len, l2_ol3_hdr_size);
+  else if (cpt_hdr->w0.reas_sts)
+    {
+      frag_cnt = oct_rx_ipsec_reassembly_failure (
+	vm, bt, cpt_hdr, d, buf, next, buffer_next_index, olen, esp_len,
+	l2_ol3_hdr_size, fp_flags);
+      oct_rx_ipsec_update_counters (vm, node, buf, next, buffer_next_index,
+				    *esp_len, frag_cnt, idx, 1);
+      return frag_cnt;
+    }
+  oct_rx_ipsec_update_counters (vm, node, buf, next, buffer_next_index,
+				*esp_len, frag_cnt, idx, 0);
+  return frag_cnt;
 }
 
 static_always_inline u8
@@ -948,7 +819,7 @@ oct_rx_inl_ipsec_vlib_from_cq (
   u16 *next, u16 *buffer_next_index, const u64 fp_flags)
 {
   union nix_rx_parse_u *orig_rxp, *rxp;
-  u32 is_fail, olen, esp_sz, l2_ol3_sz, idx;
+  u32 is_fail, olen, esp_sz, l2_ol3_sz;
   u64 *wqe_ptr;
   u8 frag_cnt;
 
@@ -984,12 +855,9 @@ oct_rx_inl_ipsec_vlib_from_cq (
       b[0]->current_length =
 	oct_get_len_from_meta (cpt_hdr, d[0].parse.w[0], d[0].parse.w[4]);
 
-      frag_cnt = oct_rx_ipsec_reassembly (vm, bt, cpt_hdr, &d[0], b[0], buffs,
-					  next, buffer_next_index, &olen,
-					  &esp_sz, l2_ol3_sz, fp_flags);
-
-      idx = cpt_hdr->w0.cookie;
-      oct_rx_ipsec_update_counters (vm, b[0], esp_sz, frag_cnt, idx);
+      frag_cnt = oct_rx_ipsec_reassembly (vm, node, bt, cpt_hdr, &d[0], b[0],
+					  buffs, next, buffer_next_index,
+					  &olen, &esp_sz, l2_ol3_sz, fp_flags);
     }
   oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp, bt, b[0]);
   ctx->n_rx_bytes += olen;
@@ -1080,7 +948,6 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 olen0, olen1, olen2, olen3;
   u32 esp_sz0, esp_sz1, esp_sz2, esp_sz3;
   u32 l2_ol3_sz0, l2_ol3_sz1, l2_ol3_sz2, l2_ol3_sz3;
-  u32 idx0, idx1, idx2, idx3;
   vlib_buffer_t *b[4];
   vlib_buffer_t **buffs = buffers + ctx->buffer_start_index;
   u16 *next = ctx->next + ctx->buffer_start_index;
@@ -1243,39 +1110,29 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      buffs[buffer_next_index] = b[0];
 	      buffer_next_index += 1;
 	      frag_cnt0 = oct_rx_ipsec_reassembly (
-		vm, &bt, cpt_hdr0, &d[0], b[0], buffs, next,
+		vm, node, &bt, cpt_hdr0, &d[0], b[0], buffs, next,
 		&buffer_next_index, &olen0, &esp_sz0, l2_ol3_sz0, fp_flags);
 
 	      buffs[buffer_next_index] = b[1];
 	      next[buffer_next_index] = ctx->next_index;
 	      buffer_next_index += 1;
 	      frag_cnt1 = oct_rx_ipsec_reassembly (
-		vm, &bt, cpt_hdr1, &d[1], b[1], buffs, next,
+		vm, node, &bt, cpt_hdr1, &d[1], b[1], buffs, next,
 		&buffer_next_index, &olen1, &esp_sz1, l2_ol3_sz1, fp_flags);
 
 	      buffs[buffer_next_index] = b[2];
 	      next[buffer_next_index] = ctx->next_index;
 	      buffer_next_index += 1;
 	      frag_cnt2 = oct_rx_ipsec_reassembly (
-		vm, &bt, cpt_hdr2, &d[2], b[2], buffs, next,
+		vm, node, &bt, cpt_hdr2, &d[2], b[2], buffs, next,
 		&buffer_next_index, &olen2, &esp_sz2, l2_ol3_sz2, fp_flags);
 
 	      buffs[buffer_next_index] = b[3];
 	      next[buffer_next_index] = ctx->next_index;
 	      buffer_next_index += 1;
 	      frag_cnt3 = oct_rx_ipsec_reassembly (
-		vm, &bt, cpt_hdr3, &d[3], b[3], buffs, next,
+		vm, node, &bt, cpt_hdr3, &d[3], b[3], buffs, next,
 		&buffer_next_index, &olen3, &esp_sz3, l2_ol3_sz3, fp_flags);
-
-	      idx0 = cpt_hdr0->w0.cookie;
-	      idx1 = cpt_hdr1->w0.cookie;
-	      idx2 = cpt_hdr2->w0.cookie;
-	      idx3 = cpt_hdr3->w0.cookie;
-
-	      oct_rx_ipsec_update_counters_x4 (
-		vm, b[0], esp_sz0, frag_cnt0, idx0, b[1], esp_sz1, frag_cnt1,
-		idx1, b[2], esp_sz2, frag_cnt2, idx2, b[3], esp_sz3, frag_cnt3,
-		idx3);
 
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
@@ -1305,13 +1162,9 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr0, d[0].parse.w[0], d[0].parse.w[4]);
 
 		  frag_cnt0 = oct_rx_ipsec_reassembly (
-		    vm, &bt, cpt_hdr0, &d[0], b[0], buffs, next,
+		    vm, node, &bt, cpt_hdr0, &d[0], b[0], buffs, next,
 		    &buffer_next_index, &olen0, &esp_sz0, l2_ol3_sz0,
 		    fp_flags);
-
-		  idx0 = cpt_hdr0->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[0], esp_sz0, frag_cnt0,
-						idx0);
 		}
 	      /* Success and Failure both cases can be multi seg */
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
@@ -1336,12 +1189,9 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  b[1]->current_length = oct_get_len_from_meta (
 		    cpt_hdr1, d[1].parse.w[0], d[1].parse.w[4]);
 		  frag_cnt1 = oct_rx_ipsec_reassembly (
-		    vm, &bt, cpt_hdr1, &d[1], b[1], buffs, next,
+		    vm, node, &bt, cpt_hdr1, &d[1], b[1], buffs, next,
 		    &buffer_next_index, &olen1, &esp_sz1, l2_ol3_sz1,
 		    fp_flags);
-		  idx1 = cpt_hdr1->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[1], esp_sz1, frag_cnt1,
-						idx1);
 		}
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
 
@@ -1365,12 +1215,9 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  b[2]->current_length = oct_get_len_from_meta (
 		    cpt_hdr2, d[2].parse.w[0], d[2].parse.w[4]);
 		  frag_cnt2 = oct_rx_ipsec_reassembly (
-		    vm, &bt, cpt_hdr2, &d[2], b[2], buffs, next,
+		    vm, node, &bt, cpt_hdr2, &d[2], b[2], buffs, next,
 		    &buffer_next_index, &olen2, &esp_sz2, l2_ol3_sz2,
 		    fp_flags);
-		  idx2 = cpt_hdr2->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[2], esp_sz2, frag_cnt2,
-						idx2);
 		}
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp2, &bt, b[2]);
 
@@ -1395,12 +1242,9 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		    cpt_hdr3, d[3].parse.w[0], d[3].parse.w[4]);
 
 		  frag_cnt3 = oct_rx_ipsec_reassembly (
-		    vm, &bt, cpt_hdr3, &d[3], b[3], buffs, next,
+		    vm, node, &bt, cpt_hdr3, &d[3], b[3], buffs, next,
 		    &buffer_next_index, &olen3, &esp_sz3, l2_ol3_sz3,
 		    fp_flags);
-		  idx3 = cpt_hdr3->w0.cookie;
-		  oct_rx_ipsec_update_counters (vm, b[3], esp_sz3, frag_cnt3,
-						idx3);
 		}
 	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp3, &bt, b[3]);
 	    }
