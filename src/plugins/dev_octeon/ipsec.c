@@ -131,6 +131,9 @@ oct_ipsec_sa_common_param_fill (union roc_ot_ipsec_sa_word2 *w2,
 	case IPSEC_CRYPTO_ALG_AES_CBC_256:
 	  w2->s.enc_type = ROC_IE_SA_ENC_AES_CBC;
 	  break;
+	case IPSEC_CRYPTO_ALG_3DES_CBC:
+	  w2->s.enc_type = ROC_IE_SA_ENC_3DES_CBC;
+	  break;
 	default:
 	  clib_warning ("Unsupported encryption algorithm");
 	  return -1;
@@ -742,6 +745,9 @@ oct_ipsec_check_support (ipsec_sa_t *sa)
     case IPSEC_CRYPTO_ALG_AES_CTR_192:
     case IPSEC_CRYPTO_ALG_AES_CTR_256:
       is_cipher_algo_supported = hw_caps.aes;
+      break;
+    case IPSEC_CRYPTO_ALG_3DES_CBC:
+      is_cipher_algo_supported = hw_caps.des;
       break;
     default:
       is_cipher_algo_supported = 0;
