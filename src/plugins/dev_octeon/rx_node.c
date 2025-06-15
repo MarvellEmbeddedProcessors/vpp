@@ -864,8 +864,14 @@ oct_rx_ipsec_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx,
    * incase of multi seg, update seg1 length and advance total words processed.
    * also, updates total bytes in buffer.
    */
-  buf->current_length = seg_len & OCT_SEG_LEN_MASK;
-  len -= buf->current_length;
+  sg_len = seg_len & OCT_SEG_LEN_MASK;
+  len -= sg_len;
+  if (len < 0)
+    {
+      sg_len = sg_len + len;
+      len = 0;
+    }
+  buf->current_length = sg_len;
 
   /* Process from 2nd segment */
   next_seg = 2;
@@ -884,16 +890,16 @@ oct_rx_ipsec_attach_tail (vlib_main_t *vm, oct_rx_node_ctx_t *ctx,
 				       sizeof (vlib_buffer_t));
 	  seg_buf->template = *bt;
 	  sg_len = seg_len & OCT_SEG_LEN_MASK;
-
-	  {
-	    /*
-	     * Adjust last buf data length with negative offset for
-	     * ipsec pkts if needed.
-	     */
-	    len -= sg_len;
-	    sg_len = (len > 0) ? sg_len : (sg_len + len);
-	    len = (len > 0) ? len : 0;
-	  }
+	  /*
+	   * Adjust last buf data length with negative offset for
+	   * ipsec pkts if needed.
+	   */
+	  len -= sg_len;
+	  if (len < 0)
+	    {
+	      sg_len = sg_len + len;
+	      len = 0;
+	    }
 
 	  seg_buf->current_length = sg_len;
 	  bi = vlib_get_buffer_index (vm, seg_buf);
@@ -984,8 +990,8 @@ oct_rx_inl_ipsec_vlib_from_cq (
 
       idx = cpt_hdr->w0.cookie;
       oct_rx_ipsec_update_counters (vm, b[0], esp_sz, frag_cnt, idx);
-      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp, bt, b[0]);
     }
+  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp, bt, b[0]);
   ctx->n_rx_bytes += olen;
   ctx->n_segs += frag_cnt;
 
@@ -1306,8 +1312,9 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  idx0 = cpt_hdr0->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[0], esp_sz0, frag_cnt0,
 						idx0);
-		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
 		}
+	      /* Success and Failure both cases can be multi seg */
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp0, &bt, b[0]);
 
 	      buffs[buffer_next_index] = b[1];
 
@@ -1335,8 +1342,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  idx1 = cpt_hdr1->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[1], esp_sz1, frag_cnt1,
 						idx1);
-		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
 		}
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp1, &bt, b[1]);
 
 	      buffs[buffer_next_index] = b[2];
 
@@ -1364,8 +1371,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  idx2 = cpt_hdr2->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[2], esp_sz2, frag_cnt2,
 						idx2);
-		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp2, &bt, b[2]);
 		}
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp2, &bt, b[2]);
 
 	      buffs[buffer_next_index] = b[3];
 
@@ -1394,8 +1401,8 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  idx3 = cpt_hdr3->w0.cookie;
 		  oct_rx_ipsec_update_counters (vm, b[3], esp_sz3, frag_cnt3,
 						idx3);
-		  oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp3, &bt, b[3]);
 		}
+	      oct_rx_ipsec_attach_tail (vm, ctx, orig_rxp3, &bt, b[3]);
 	    }
 	  ctx->n_rx_bytes += olen0 + olen1 + olen2 + olen3;
 	  ctx->n_segs += frag_cnt0 + frag_cnt1 + frag_cnt2 + frag_cnt3;
