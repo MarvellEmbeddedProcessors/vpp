@@ -285,3 +285,73 @@ VLIB_CLI_COMMAND (oct_ipsec_inline_counters_clear_command, static) = {
   .short_help = "clear ipsec inline counters",
   .function = oct_ipsec_inline_counters_clear_command_fn,
 };
+
+static clib_error_t *
+oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			       vlib_cli_command_t *cmd)
+{
+  vnet_dev_main_t *dm = &vnet_dev_main;
+  oct_rxq_t *crq;
+  int i;
+
+  if (oct_main.use_single_rx_aura && oct_main.rx_aura_handle)
+    vlib_cli_output (vm, "rx queue aura 0x%llx avl_count %llu\n\n",
+		     oct_main.rx_aura_handle,
+		     roc_npa_aura_op_available (oct_main.rx_aura_handle));
+
+  pool_foreach_pointer (dev, dm->devices)
+    {
+      oct_device_t *od = vnet_dev_get_data (dev);
+
+      if (od->type == OCT_DEVICE_TYPE_RVU_PF ||
+	  od->type == OCT_DEVICE_TYPE_RVU_VF ||
+	  od->type == OCT_DEVICE_TYPE_SDP_VF ||
+	  od->type == OCT_DEVICE_TYPE_LBK_VF)
+	{
+	  vlib_cli_output (vm, "Interface: %U", format_vnet_dev_log, dev, 0);
+	  vlib_cli_output (vm, "%-.25s", ul);
+	  if (!oct_main.use_single_rx_aura)
+	    {
+	      for (i = 0; i < dev->ports[0]->intf.num_rx_queues; i++)
+		{
+		  crq =
+		    vnet_dev_get_rx_queue_data (dev->ports[0]->rx_queues[i]);
+		  vlib_cli_output (
+		    vm, "rx queue %d aura 0x%llx avl_count %llu\n", i,
+		    crq->aura_handle,
+		    roc_npa_aura_op_available (crq->aura_handle));
+		}
+	    }
+	  for (i = 0; i < dev->ports[0]->intf.num_tx_queues; i++)
+	    {
+	      vlib_cli_output (
+		vm, "tx queue %d aura %x avl_count %d\n", i,
+		od->ctqs[i]->aura_handle,
+		roc_npa_aura_op_available (od->ctqs[i]->aura_handle));
+	    }
+	  if (oct_main.inl_dev_initialized && roc_model_is_cn10k ())
+	    {
+	      crq = vnet_dev_get_rx_queue_data (dev->ports[0]->rx_queues[0]);
+	      vlib_cli_output (
+		vm, "meta_aura_handle %x avl_count %d\n",
+		crq->rq.meta_aura_handle,
+		roc_npa_aura_op_available (crq->rq.meta_aura_handle));
+	    }
+	  vlib_cli_output (vm, "\n");
+	}
+    }
+  return 0;
+}
+
+/*?
+ * This command displays OCTEON aura avaialbe counts
+ *
+ * @cliexpar
+ * @cliexstart{show octeon aura available}
+ * @cliexend
+?*/
+VLIB_CLI_COMMAND (oct_aura_available_command, static) = {
+  .path = "show octeon aura available",
+  .short_help = "show octeon aura available",
+  .function = oct_aura_available_command_fn,
+};
