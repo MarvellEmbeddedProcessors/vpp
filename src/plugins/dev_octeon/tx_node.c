@@ -630,6 +630,7 @@ oct_ipsec_append_next_buffer (vlib_main_t *vm, vlib_buffer_t *buffer,
   tmp = vlib_get_buffer (vm, buffer_index);
   buffer->next_buffer = buffer_index;
   buffer->flags |= VLIB_BUFFER_NEXT_PRESENT;
+  buffer->total_length_not_including_first_buffer = 0;
   tmp->current_length += bytes_to_append;
 }
 
@@ -661,22 +662,26 @@ oct_ipsec_fill_sg2_buf (vlib_main_t *vm, struct roc_sg2list_comp *list, int i,
 static_always_inline int
 oct_ipsec_outb_prepare_sg2_list (vlib_main_t *vm, vlib_buffer_t *b,
 				 struct cpt_inst_s *inst, u32 bytes_to_append,
-				 u32 dlen, void *m_data)
+				 u32 dlen,
+				 oct_ipsec_outbound_pkt_meta_t **pkt_meta,
+				 u64 *n_dwords, oct_ipsec_session_t *sess)
 {
   u16 buffer_data_size = vlib_buffer_get_default_data_size (vm);
   struct roc_sg2list_comp *scatter_comp, *gather_comp;
+  void *m_data = (void *) pkt_meta[0]->sg_buffer;
+  union nix_send_sg_s *sg;
   union cpt_inst_w5 cpt_inst_w5;
   union cpt_inst_w6 cpt_inst_w6;
   vlib_buffer_t *last_buf = b;
-  int i;
+  int n_segs;
 
   /* Input Gather List */
-  i = 0;
+  n_segs = 0;
   gather_comp = (struct roc_sg2list_comp *) ((uint8_t *) m_data + 64);
 
-  i = oct_ipsec_fill_sg2_buf (vm, gather_comp, i, &last_buf);
+  n_segs = oct_ipsec_fill_sg2_buf (vm, gather_comp, n_segs, &last_buf);
 
-  cpt_inst_w5.s.gather_sz = ((i + 2) / 3);
+  cpt_inst_w5.s.gather_sz = ((n_segs + 2) / 3);
 
   if ((bytes_to_append + last_buf->current_length) > buffer_data_size)
     {
@@ -691,12 +696,12 @@ oct_ipsec_outb_prepare_sg2_list (vlib_main_t *vm, vlib_buffer_t *b,
   last_buf = b;
 
   /* Output Gather List */
-  i = 0;
+  n_segs = 0;
   scatter_comp = (struct roc_sg2list_comp *) ((uint8_t *) m_data);
 
-  i = oct_ipsec_fill_sg2_buf (vm, scatter_comp, i, &last_buf);
+  n_segs = oct_ipsec_fill_sg2_buf (vm, scatter_comp, n_segs, &last_buf);
 
-  cpt_inst_w6.s.scatter_sz = ((i + 2) / 3);
+  cpt_inst_w6.s.scatter_sz = ((n_segs + 2) / 3);
   cpt_inst_w5.s.dptr = (uint64_t) gather_comp;
 
   cpt_inst_w6.s.rptr = (uint64_t) scatter_comp;
@@ -708,7 +713,16 @@ oct_ipsec_outb_prepare_sg2_list (vlib_main_t *vm, vlib_buffer_t *b,
 
   b->total_length_not_including_first_buffer += bytes_to_append;
 
-  return i;
+  sg = (union nix_send_sg_s *) (pkt_meta[0]->nixtx + 2);
+  inst->w0.u64 = (uint64_t) vnet_buffer (b)->l3_hdr_offset << 16;
+  inst->w0.u64 |= NIX_NB_SEGS_TO_SEGDW (n_segs);
+  inst->w0.u64 |=
+    (((int64_t) pkt_meta[0]->nixtx - (int64_t) inst->dptr) & 0xFFFFF) << 32;
+  n_dwords[0] = (n_segs % 3) + (n_segs / 3) * 2;
+  sg[0].subdc = NIX_SUBDC_SG;
+  sg[4].subdc = NIX_SUBDC_SG;
+
+  return n_segs;
 }
 
 static_always_inline u32
@@ -759,52 +773,63 @@ oct_prepare_ipsec_inst (vlib_main_t *vm, vlib_buffer_t *b, u64 sq_handle,
   struct nix_send_hdr_s *send_hdr;
   union nix_send_sg_s *sg;
   u64 n_segs;
-  u16 total_length;
+  u16 total_length, dlen_adj;
   u16 l3_hdr_offset = vnet_buffer (b)->l3_hdr_offset;
-  u32 dlen = b->current_length + b->total_length_not_including_first_buffer -
-	     l3_hdr_offset;
-  u32 rlen = oct_ipsec_rlen_get (&sess->encap, dlen);
-  u16 dlen_adj = rlen - dlen;
-  u32 sa_bytes = oct_ipsec_esp_add_footer_and_icv (&sess->encap, rlen);
+  u32 dlen, rlen, sa_bytes;
 
   send_hdr = (struct nix_send_hdr_s *) pkt_meta[0]->nixtx;
-  sg = (union nix_send_sg_s *) (pkt_meta[0]->nixtx + 2);
 
-  if (b->flags & VLIB_BUFFER_NEXT_PRESENT || rlen > buffer_data_size)
+  if (b->flags & VLIB_BUFFER_NEXT_PRESENT)
     {
       total_length =
 	b->current_length + b->total_length_not_including_first_buffer;
+      dlen = total_length - l3_hdr_offset;
+      rlen = oct_ipsec_rlen_get (&sess->encap, dlen);
+      dlen_adj = rlen - dlen;
+
       inst->w4.u64 = sess->inst.w4.u64;
 
       n_segs = oct_ipsec_outb_prepare_sg2_list (
-	vm, b, inst, dlen_adj, total_length, (void *) pkt_meta[0]->sg_buffer);
-
-      inst->w0.u64 = (uint64_t) l3_hdr_offset << 16;
-      inst->w0.u64 |= NIX_NB_SEGS_TO_SEGDW (n_segs);
-      inst->w0.u64 |=
-	(((int64_t) pkt_meta[0]->nixtx - (int64_t) inst->dptr) & 0xFFFFF)
-	<< 32;
-      n_dwords[0] = (n_segs % 3) + (n_segs / 3) * 2;
-      sg[0].subdc = NIX_SUBDC_SG;
-      sg[4].subdc = NIX_SUBDC_SG;
+	vm, b, inst, dlen_adj, total_length, pkt_meta, n_dwords, sess);
     }
   else
     {
-      inst->dptr = (u64) ((u8 *) vlib_buffer_get_current (b) + l3_hdr_offset);
-      inst->rptr = inst->dptr;
-      /* Set w0 nixtx_offset */
-      inst->w0.u64 |=
-	(((int64_t) pkt_meta[0]->nixtx - (int64_t) inst->dptr) & 0xFFFFF)
-	<< 32;
-      inst->w0.u64 |= 1;
-      inst->w4.u64 = sess->inst.w4.u64 | dlen;
+      dlen = b->current_length - l3_hdr_offset;
 
-      b->current_length += dlen_adj;
-      n_segs = oct_get_tx_vlib_buf_segs (vm, b);
-      n_dwords[0] = oct_add_sg_list (sg, b, n_segs);
+      rlen = oct_ipsec_rlen_get (&sess->encap, dlen);
+      dlen_adj = rlen - dlen;
+
+      if (rlen > buffer_data_size)
+	{
+	  inst->w4.u64 = sess->inst.w4.u64;
+
+	  n_segs = oct_ipsec_outb_prepare_sg2_list (vm, b, inst, dlen_adj,
+						    b->current_length,
+						    pkt_meta, n_dwords, sess);
+	}
+      else
+	{
+	  sg = (union nix_send_sg_s *) (pkt_meta[0]->nixtx + 2);
+
+	  inst->dptr =
+	    (u64) ((u8 *) vlib_buffer_get_current (b) + l3_hdr_offset);
+	  inst->rptr = inst->dptr;
+	  /* Set w0 nixtx_offset */
+	  inst->w0.u64 |=
+	    (((int64_t) pkt_meta[0]->nixtx - (int64_t) inst->dptr) & 0xFFFFF)
+	    << 32;
+	  inst->w0.u64 |= 1;
+	  inst->w4.u64 = sess->inst.w4.u64 | dlen;
+
+	  b->current_length += dlen_adj;
+	  n_segs = oct_get_tx_vlib_buf_segs (vm, b);
+	  n_dwords[0] = oct_add_sg_list (sg, b, n_segs);
+	}
     }
 
   oct_add_send_hdr (send_hdr, b, aura_handle, sq_handle, n_dwords[0]);
+
+  sa_bytes = oct_ipsec_esp_add_footer_and_icv (&sess->encap, rlen);
   vlib_increment_combined_counter (
     &ipsec_sa_counters, vlib_get_thread_index (),
     vnet_buffer (b)->ipsec.sad_index, 1, sa_bytes);
