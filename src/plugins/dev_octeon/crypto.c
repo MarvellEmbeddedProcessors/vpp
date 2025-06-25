@@ -44,7 +44,7 @@ oct_crypto_session_alloc (vlib_main_t *vm, u8 type)
 
   size = sizeof (oct_crypto_sess_t);
 
-  addr = oct_plt_init_param.oct_plt_zmalloc (size, CLIB_CACHE_LINE_BYTES);
+  addr = oct_plt_init_param.oct_plt_zmalloc (size, ROC_CPTR_CACHE_LINE_SZ);
   if (addr == NULL)
     {
       log_err (ocd->dev, "Failed to allocate crypto session memory");
