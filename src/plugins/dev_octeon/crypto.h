@@ -97,6 +97,8 @@ typedef struct
 typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
+  /** ROC CPT context */
+  struct roc_se_ctx cpt_ctx;
   /** CPT opcode */
   u16 cpt_op : 4;
   /** Flag for AES GCM */
@@ -116,7 +118,6 @@ typedef struct
   /* store link key index in case of linked algo */
   vnet_crypto_key_index_t key_index;
   oct_crypto_dev_t *crypto_dev;
-  struct roc_se_ctx cpt_ctx;
 } oct_crypto_sess_t;
 
 typedef struct
