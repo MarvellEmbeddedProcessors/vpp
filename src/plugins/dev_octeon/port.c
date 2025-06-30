@@ -160,6 +160,7 @@ oct_parse_switch_hdr_type (const char *value)
 vnet_dev_rv_t
 oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 {
+  oct_inl_dev_main_t *inl_main = &oct_inl_dev_main;
   vnet_dev_t *dev = port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
   oct_port_t *cp = vnet_dev_get_port_data (port);
@@ -261,6 +262,29 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
   cp->npc_initialized = 1;
 
+  /* Configure pause frame flow control*/
+  if (is_pause_frame_enable &&
+      (rv = oct_port_pause_flow_control_init (vm, port)))
+    {
+      oct_port_deinit (vm, port);
+      return rv;
+    }
+
+  if (inl_main->inl_dev)
+    {
+      struct roc_nix_fc_cfg fc_cfg;
+
+      fc_cfg.type = ROC_NIX_FC_RXCHAN_CFG;
+      fc_cfg.rxchan_cfg.enable = true;
+      rrv = roc_nix_fc_config_set (nix, &fc_cfg);
+      if (rrv)
+	{
+	  rv = oct_roc_err (dev, rrv, "roc_nix_fc_config_set failed");
+	  oct_port_deinit (vm, port);
+	  return rv;
+	}
+    }
+
   foreach_vnet_dev_port_rx_queue (q, port)
     total_sz += q->size;
 
@@ -291,15 +315,6 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   if ((rrv = roc_nix_mac_mtu_set (nix, 9200)))
     {
       rv = oct_roc_err (dev, rrv, "roc_nix_mac_mtu_set() failed");
-      return rv;
-    }
-
-  /* Configure pause frame flow control*/
-
-  if (is_pause_frame_enable &&
-      (rv = oct_port_pause_flow_control_init (vm, port)))
-    {
-      oct_port_deinit (vm, port);
       return rv;
     }
 
