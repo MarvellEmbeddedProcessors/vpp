@@ -801,24 +801,29 @@ quit_testpmd "$TPMD_RX_PREFIX"
 vpp_log inl_ipsec_perf
 vpp_stats_all inl_ipsec_perf
 vpp_cleanup inl_ipsec_perf
+
 #
 echo ""
 # Inbound
-#X=1
-#Y=0
-#run_vpp_ipsec_inb
-#pmd_rx_launch
-#aes_cbc_sha1_hmac_inb
-#quit_testpmd "$TPMD_RX_PREFIX"
-#
-#sleep $WS
+X=1
+Y=0
+run_vpp_ipsec_inb
+pmd_rx_launch
+aes_cbc_sha1_hmac_inb
+quit_testpmd "$TPMD_RX_PREFIX"
 
-#echo ""
-#X=2
-#Y=1
-#pmd_rx_launch
-#aes_gcm_inb
-#quit_testpmd "$TPMD_RX_PREFIX"
+sleep $WS
+
+echo ""
+X=2
+Y=1
+vpp_log inl_ipsec_perf
+vpp_stats_all inl_ipsec_perf
+vpp_cleanup inl_ipsec_perf
+run_vpp_ipsec_inb
+pmd_rx_launch
+aes_gcm_inb
+quit_testpmd "$TPMD_RX_PREFIX"
 vpp_log inl_ipsec_perf
 vpp_stats_all inl_ipsec_perf
 vpp_cleanup inl_ipsec_perf
