@@ -528,7 +528,7 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
 {
   clib_bihash_kv_24_16_t bkey60 = { 0 };
   clib_bihash_kv_8_16_t bkey40 = { 0 };
-  ipsec_tun_lkup_result_t *res;
+  ipsec_tun_lkup_result_t res;
   ipsec4_tunnel_kv_t *key40;
   ipsec6_tunnel_kv_t *key60;
   ip_address_t *ip_addr;
@@ -551,7 +551,7 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
       if (PREDICT_FALSE (rv))
 	return ~0;
 
-      res = (ipsec_tun_lkup_result_t *) &bkey40.value;
+      clib_memcpy_fast (&res, &bkey40.value, sizeof (res));
     }
   else
     {
@@ -566,14 +566,14 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
       if (PREDICT_FALSE (rv))
 	return ~0;
 
-      res = (ipsec_tun_lkup_result_t *) &bkey60.value;
+      clib_memcpy_fast (&res, &bkey60.value, sizeof (res));
     }
 
   /* Store the ITF sw_if_index in the SA session to avoid duplicate
      lookups for each packet */
-  session->itf_sw_idx = res->sw_if_index;
+  session->itf_sw_idx = res.sw_if_index;
 
-  return res->sw_if_index;
+  return res.sw_if_index;
 }
 
 static_always_inline void
