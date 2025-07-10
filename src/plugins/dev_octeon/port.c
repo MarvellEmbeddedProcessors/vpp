@@ -262,14 +262,6 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
   cp->npc_initialized = 1;
 
-  /* Configure pause frame flow control*/
-  if (is_pause_frame_enable &&
-      (rv = oct_port_pause_flow_control_init (vm, port)))
-    {
-      oct_port_deinit (vm, port);
-      return rv;
-    }
-
   if (inl_main->inl_dev)
     {
       struct roc_nix_fc_cfg fc_cfg;
@@ -315,6 +307,14 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   if ((rrv = roc_nix_mac_mtu_set (nix, port->max_rx_frame_size)))
     {
       rv = oct_roc_err (dev, rrv, "roc_nix_mac_mtu_set() failed");
+      return rv;
+    }
+
+  /* Configure pause frame flow control*/
+  if (is_pause_frame_enable &&
+      (rv = oct_port_pause_flow_control_init (vm, port)))
+    {
+      oct_port_deinit (vm, port);
       return rv;
     }
 
