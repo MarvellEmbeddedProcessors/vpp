@@ -687,6 +687,7 @@ openssl_set_ckpair (SSL *ssl, u32 ckpair_index)
     }
   SSL_use_certificate (ssl, srvcert);
   BIO_free (cert_bio);
+  X509_free (srvcert);
 
   cert_bio = BIO_new (BIO_s_mem ());
   BIO_write (cert_bio, ckpair->key, vec_len (ckpair->key));
@@ -698,6 +699,7 @@ openssl_set_ckpair (SSL *ssl, u32 ckpair_index)
     }
   SSL_use_PrivateKey (ssl, pkey);
   BIO_free (cert_bio);
+  EVP_PKEY_free (pkey);
   TLS_DBG (1, "TLS client using ckpair index: %d", ckpair_index);
   return 0;
 }
@@ -971,6 +973,7 @@ openssl_start_listen (tls_ctx_t * lctx)
     }
 
   BIO_free (cert_bio);
+  X509_free (srvcert);
 
   cert_bio = BIO_new (BIO_s_mem ());
   if (!cert_bio)
@@ -993,6 +996,7 @@ openssl_start_listen (tls_ctx_t * lctx)
     }
 
   BIO_free (cert_bio);
+  EVP_PKEY_free (pkey);
 
   olc_index = openssl_listen_ctx_alloc ();
   olc = openssl_lctx_get (olc_index);
@@ -1019,9 +1023,6 @@ openssl_stop_listen (tls_ctx_t * lctx)
 
   olc_index = lctx->tls_ssl_ctx;
   olc = openssl_lctx_get (olc_index);
-
-  X509_free (olc->srvcert);
-  EVP_PKEY_free (olc->pkey);
 
   SSL_CTX_free (olc->ssl_ctx);
   openssl_listen_ctx_free (olc);
