@@ -1235,7 +1235,6 @@ oct_ipsec_check_support (ipsec_sa_t *sa)
     case IPSEC_INTEG_ALG_NONE:
       is_auth_algo_supported = 1;
       break;
-    case IPSEC_INTEG_ALG_MD5_96:
     case IPSEC_INTEG_ALG_SHA1_96:
     case IPSEC_INTEG_ALG_SHA_256_128:
     case IPSEC_INTEG_ALG_SHA_384_192:
