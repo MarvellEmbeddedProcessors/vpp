@@ -25,9 +25,9 @@ jobs:
       - name: Generate cache keys
         id: get_ref_keys
         run: |
-          echo 'ccache=ccache-'$(date -u +%Y-m%M) >> $GITHUB_OUTPUT
+          echo 'ccache=ccache-'$(date -u +%Y-%m) >> $GITHUB_OUTPUT
       - name: Retrieve ccache cache
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.3
         with:
           path: ~/.ccache
           key: ${{ steps.get_ref_keys.outputs.ccache }}-${{ github.ref }}
@@ -61,7 +61,6 @@ jobs:
         id: build
         run: |
             set -x
-            mkdir -p ~/.ccache
             BASE_DIR=${PWD}
             sudo apt-get update -q -y
             sudo apt-get install -y apt-utils gcc meson sudo make dialog ccache git build-essential software-properties-common
@@ -123,7 +122,6 @@ jobs:
             source ${BASE_DIR}/artifacts/env
             DISTRO=ubuntu-`lsb_release -rs`
             echo "DISTRO=${DISTRO}" >> ${BASE_DIR}/artifacts/env
-            echo "cache_dir = ~/.ccache" > ~/.ccache/ccache.conf
             ccache -p
             git config --global --add safe.directory "${PWD}"
             sudo APT_ARGS='-y -q' make install-deps
@@ -141,6 +139,7 @@ jobs:
             echo "Homepage: https://wiki.fd.io/view/VPP" >> DEBIAN/control
             echo "Description: Vector Packet Processing (VPP) for Octeon9" >> DEBIAN/control
             cd -
+            rm -rf "${PWD}/install/~" "${PWD}/install/home"
             mv "${PWD}/install" "${PWD}/vpp-${PKG_VERSION_NAME}-cn9k${PKG_POSTFIX}_${MRVL_PKG_VERSION}_arm64"
             dpkg --build "vpp-${PKG_VERSION_NAME}-cn9k${PKG_POSTFIX}_${MRVL_PKG_VERSION}_arm64"
             cp "vpp-${PKG_VERSION_NAME}-cn9k${PKG_POSTFIX}_${MRVL_PKG_VERSION}_arm64.deb" ${BASE_DIR}/artifacts/.
