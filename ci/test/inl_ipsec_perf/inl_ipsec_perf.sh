@@ -12,7 +12,7 @@ OCTEONTESTPATH="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )/.."
 PKT_LIST="64 380 1410"
 NUM_CAPTURE=3
 MAX_TRY_CNT=5
-CORES=(1)
+CORES=(1 2 4)
 COREMASK="0x10000"
 TXWAIT=15
 RXWAIT=5
@@ -208,40 +208,86 @@ function supported_by_9k()
 
 function run_vpp_ipsec()
 {
-	echo "vpp outb"
+	local i
+	n_CORES=$1
+	echo "vpp outb num_cores:$n_CORES"
 	IS_RXPPS_TXTPMD=1
 	rm -rf /tmp/inl_ipsec_perf
 	mkdir -p /tmp/inl_ipsec_perf
-	cp inl_ipsec_perf.conf /tmp/inl_ipsec_perf/
+	cp inl_ipsec_perf_$n_CORES.conf /tmp/inl_ipsec_perf/
 	cp ${CFG[$Y]} /tmp/inl_ipsec_perf/
 
 	# Inline Protocol
-	vpp_launch inl_ipsec_perf
+	vpp_launch inl_ipsec_perf_$n_CORES
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF0 driver octeon"
 	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF0 port 0 name eth0 num-rx-queues 8 tx-queues-size 16384"
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF1 driver octeon"
 	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF1 port 0 name eth1 num-rx-queues 8 tx-queues-size 16384"
 	vpp_exec_file inl_ipsec_perf /tmp/inl_ipsec_perf/${CFG[$Y]}
-	vpp_add_trace inl_ipsec_perf eth0
+	for (( i=0; i<$n_CORES; i++ ))
+	do
+		if [[ $Y == 0 ]]; then
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
+		else
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
+		fi
+
+		vpp_exec_cmd inl_ipsec_perf "ipsec itf create"
+		vpp_exec_cmd inl_ipsec_perf "ipsec tunnel protect sa-out $((i+11)) sa-in $((i+1)) ipsec$i"
+		vpp_exec_cmd inl_ipsec_perf "set int state ipsec$i up"
+
+		vpp_exec_cmd inl_ipsec_perf "ip route add 10.253.0.$i/32 via ipsec$i"
+		vpp_exec_cmd inl_ipsec_perf "set ip neighbor eth0 $((i+1)).1.1.1 00:16:3e:7e:94:9a"
+
+		vpp_exec_cmd inl_ipsec_perf "ip route add $((i+1)).1.1.0/24 via eth0"
+
+		vpp_exec_cmd inl_ipsec_perf "test flow add dst-ip 10.253.0.$i/255.255.255.255 proto 17 redirect-to-queue $i"
+		vpp_exec_cmd inl_ipsec_perf "test flow enable index $((i+2)) eth0"
+	done
+
 	sleep $WS
 }
 
 function run_vpp_ipsec_inb()
 {
-	echo "vpp inb"
+	local i
+	n_CORES=$1
+	echo "vpp inb num_cores:$n_CORES"
 	IS_RXPPS_TXTPMD=1
 	rm -rf /tmp/inl_ipsec_perf
 	mkdir -p /tmp/inl_ipsec_perf
-	cp inl_ipsec_perf.conf /tmp/inl_ipsec_perf/
+	cp inl_ipsec_perf_$n_CORES.conf /tmp/inl_ipsec_perf/
 	cp ${IP_IB_CFG[$Y]} /tmp/inl_ipsec_perf/
 
 	# Inline Protocol
-	vpp_launch inl_ipsec_perf
+	vpp_launch inl_ipsec_perf_$n_CORES
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF0 driver octeon"
 	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF0 port 0 name eth0 num-rx-queues 8 tx-queues-size 16384"
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF1 driver octeon"
 	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF1 port 0 name eth1 num-rx-queues 8 tx-queues-size 16384"
 	vpp_exec_file inl_ipsec_perf /tmp/inl_ipsec_perf/${IP_IB_CFG[$Y]}
+
+	for (( i=0; i<$n_CORES; i++ ))
+	do
+		if [[ $Y == 0 ]]; then
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
+		else
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.2.1 dst $((i+1)).1.2.2 inbound"
+			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.2.2 dst $((i+1)).1.2.1"
+		fi
+
+		vpp_exec_cmd inl_ipsec_perf "ipsec itf create"
+		vpp_exec_cmd inl_ipsec_perf "ipsec tunnel protect sa-in $((i+1)) sa-out $((i+11)) ipsec$i"
+		vpp_exec_cmd inl_ipsec_perf "set int state ipsec$i up"
+
+		vpp_exec_cmd inl_ipsec_perf "test flow add dst-ip 192.168.2.$((i+2))/255.255.255.255 proto 17 redirect-to-queue $i"
+		vpp_exec_cmd inl_ipsec_perf "test flow enable index $((i+2)) eth0"
+		vpp_exec_cmd inl_ipsec_perf "ip route add 192.168.2.$((i+2))/32 via eth0"
+		vpp_exec_cmd inl_ipsec_perf "set ip neighbor eth0 192.168.2.$((i+2)) 00:16:3e:7e:94:9a"
+	done
 
 	sleep $WS
 }
@@ -261,7 +307,6 @@ function sig_handler()
 	quit_testpmd "$TPMD_RX_PREFIX"
 	if [[ $status -ne 0 ]]; then
 		echo "$1 Handler"
-		ps -ef
 	fi
 	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
 	cleanup_interfaces
@@ -298,7 +343,7 @@ function pmd_tx_launch()
 		C_MSK="0x3800"
 	fi
 	if [[ $WITH_GEN_BOARD -eq 1 ]]; then
-		exec_testpmd_cmd_gen "launch_tx_outb" $TPMD_TX_PREFIX $X
+		exec_testpmd_cmd_gen "launch_tx_outb" $TPMD_TX_PREFIX $1
 	else
 		testpmd_launch "$TPMD_TX_PREFIX" \
 			"-c $C_MSK -a $LIF1" \
@@ -322,7 +367,7 @@ function pmd_tx_launch_for_inb()
 		C_MSK="0x3800"
 	fi
 
-	local pcap=$OCTEONTESTPATH/inl_ipsec_perf/pcap/enc_$1_$2.pcap
+	local pcap=$OCTEONTESTPATH/inl_ipsec_perf/pcap/enc_$1_$2_$3.pcap
 
 	if [[ $WITH_GEN_BOARD -eq 1 ]]; then
 		exec_testpmd_cmd_gen "launch_tx_inb" $TPMD_TX_PREFIX $pcap
@@ -509,12 +554,11 @@ function outb_perf()
 			rx_pps=0
 			if [[ $tcnt -gt 1 ]]; then
 				# Restart vpp
-				vpp_show_trace inl_ipsec_perf
 				vpp_log inl_ipsec_perf
 				vpp_stats_all inl_ipsec_perf
 				vpp_cleanup inl_ipsec_perf
 				echo "Restart vpp"
-				run_vpp_ipsec
+				run_vpp_ipsec $3
 			fi
 			start_testpmd
 			pmd_rx_dry_run
@@ -542,7 +586,7 @@ function outb_perf()
 		done
 		if [[ $tcnt -gt $MAX_TRY_CNT ]]; then
 			echo "Test Failed"
-			Failed_tests="$Failed_tests \"${TN[$Y]} outbound $algo pktsize:$pktsz\""
+			Failed_tests="$Failed_tests \"${TN[$Y]} outbound $algo pktsize:$pktsz num_cores:$3\""
 		fi
 		((++rn))
 	done
@@ -564,7 +608,7 @@ function inb_perf()
 	for pktsz in ${PKT_LIST[@]}
 	do
 		sleep $WS
-		pmd_tx_launch_for_inb $1 $pktsz
+		pmd_tx_launch_for_inb $1 $pktsz $3
 
 		tcnt=1
 		while [ $tcnt -le $MAX_TRY_CNT ]; do
@@ -577,7 +621,7 @@ function inb_perf()
 				vpp_stats_all inl_ipsec_perf
 				vpp_cleanup inl_ipsec_perf
 				echo "Restart vpp"
-				run_vpp_ipsec_inb
+				run_vpp_ipsec_inb $3
 			fi
 			start_testpmd
 			pmd_rx_dry_run
@@ -607,7 +651,7 @@ function inb_perf()
 		if [[ $tcnt -gt $MAX_TRY_CNT ]]; then
 			echo "Test Failed"
 			quit_testpmd "$TPMD_TX_PREFIX"
-			Failed_tests="$Failed_tests \"${TN[$Y]} inbound $algo pktsize:$pktsz\""
+			Failed_tests="$Failed_tests \"${TN[$Y]} inbound $algo pktsize:$pktsz num_cores:$3\""
 		fi
 		((++rn))
 	done
@@ -646,17 +690,11 @@ function aes_cbc_sha1_hmac_outb()
 	local cipher="aes-cbc"
 	local auth="sha1-hmac"
 	local algo_str="${cipher}_${auth}"
-	local cn
 
 	echo "Outbound Perf Test: $algo_str"
 	populate_pass_mops $algo_str "${TYPE[$Y]}.outb"
 
-	cn=0
-	for j in ${CORES[@]}
-	do
-		outb_perf $algo_str $cn $j
-		((++cn))
-	done
+	outb_perf $algo_str $1 $2
 }
 
 function aes_cbc_sha1_hmac_inb()
@@ -669,12 +707,7 @@ function aes_cbc_sha1_hmac_inb()
 	echo "Inbound Perf Test: $algo_str"
 	populate_pass_mops $algo_str "${TYPE[$Y]}.inb"
 
-	cn=0
-	for j in ${CORES[@]}
-	do
-		inb_perf $algo_str $cn $j
-		((++cn))
-	done
+	inb_perf $algo_str $1 $2
 }
 
 function aes_gcm_outb()
@@ -686,12 +719,7 @@ function aes_gcm_outb()
 	echo "Outbound Perf Test: $algo_str"
 	populate_pass_mops $algo_str "${TYPE[$Y]}.outb"
 
-	cn=0
-	for j in ${CORES[@]}
-	do
-		outb_perf $algo_str $cn $j
-		((++cn))
-	done
+	outb_perf $algo_str $1 $2
 }
 
 function aes_gcm_inb()
@@ -703,12 +731,7 @@ function aes_gcm_inb()
 	echo "Inbound Perf Test: $algo_str"
 	populate_pass_mops $algo_str "${TYPE[$Y]}.inb"
 
-	cn=0
-	for j in ${CORES[@]}
-	do
-		inb_perf $algo_str $cn $j
-		((++cn))
-	done
+	inb_perf $algo_str $1 $2
 }
 
 get_system_info
@@ -761,72 +784,79 @@ EVENT_VF=$SSO_DEV
 setup_interfaces
 exec_genboard_cleanup
 
-Y=0
+count=0
+for c in ${CORES[@]}
+do
+	Y=0
+	echo ""
+	echo "Test: ${TN[$Y]} Num_cores: $c"
+	echo "----------------------"
+	sleep $WS
 
-echo ""
-echo "Test: ${TN[$Y]}"
-echo "----------------------"
-sleep $WS
+	# Outbound
+	# aes-cbc sha1-hmac
 
-# Outbound
-# aes-cbc sha1-hmac
+	X=1
+	Y=0
+	run_vpp_ipsec "$c"
 
-X=1
-Y=0
-run_vpp_ipsec
+	pmd_rx_launch
+	pmd_tx_launch $c
+	aes_cbc_sha1_hmac_outb $count $c
+	quit_testpmd "$TPMD_TX_PREFIX"
+	quit_testpmd "$TPMD_RX_PREFIX"
+	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+	vpp_log inl_ipsec_perf
+	vpp_stats_all inl_ipsec_perf
+	vpp_cleanup inl_ipsec_perf
+	sleep $WS
 
-pmd_rx_launch
-pmd_tx_launch
-aes_cbc_sha1_hmac_outb
-quit_testpmd "$TPMD_TX_PREFIX"
-quit_testpmd "$TPMD_RX_PREFIX"
+	echo ""
+	# aes-gcm
 
-sleep $WS
+	X=2
+	Y=1
+	run_vpp_ipsec "$c"
 
-echo ""
-# aes-gcm
+	pmd_rx_launch
+	pmd_tx_launch $c
+	aes_gcm_outb $count $c
+	quit_testpmd "$TPMD_TX_PREFIX"
+	quit_testpmd "$TPMD_RX_PREFIX"
+	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+	vpp_log inl_ipsec_perf
+	vpp_stats_all inl_ipsec_perf
+	vpp_cleanup inl_ipsec_perf
 
-X=2
-Y=1
-vpp_log inl_ipsec_perf
-vpp_stats_all inl_ipsec_perf
-vpp_cleanup inl_ipsec_perf
-run_vpp_ipsec
+	#
+	echo ""
+	# Inbound
+	X=1
+	Y=0
+	run_vpp_ipsec_inb $c
+	pmd_rx_launch
+	aes_cbc_sha1_hmac_inb $count $c
+	quit_testpmd "$TPMD_RX_PREFIX"
+	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+	vpp_log inl_ipsec_perf
+	vpp_stats_all inl_ipsec_perf
+	vpp_cleanup inl_ipsec_perf
 
-pmd_rx_launch
-pmd_tx_launch
-aes_gcm_outb
-quit_testpmd "$TPMD_TX_PREFIX"
-quit_testpmd "$TPMD_RX_PREFIX"
-vpp_log inl_ipsec_perf
-vpp_stats_all inl_ipsec_perf
-vpp_cleanup inl_ipsec_perf
+	sleep $WS
 
-#
-echo ""
-# Inbound
-X=1
-Y=0
-run_vpp_ipsec_inb
-pmd_rx_launch
-aes_cbc_sha1_hmac_inb
-quit_testpmd "$TPMD_RX_PREFIX"
-
-sleep $WS
-
-echo ""
-X=2
-Y=1
-vpp_log inl_ipsec_perf
-vpp_stats_all inl_ipsec_perf
-vpp_cleanup inl_ipsec_perf
-run_vpp_ipsec_inb
-pmd_rx_launch
-aes_gcm_inb
-quit_testpmd "$TPMD_RX_PREFIX"
-vpp_log inl_ipsec_perf
-vpp_stats_all inl_ipsec_perf
-vpp_cleanup inl_ipsec_perf
+	echo ""
+	X=2
+	Y=1
+	run_vpp_ipsec_inb $c
+	pmd_rx_launch
+	aes_gcm_inb $count $c
+	quit_testpmd "$TPMD_RX_PREFIX"
+	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+	vpp_log inl_ipsec_perf
+	vpp_stats_all inl_ipsec_perf
+	vpp_cleanup inl_ipsec_perf
+	((++count))
+done
 
 echo ""
 if [[ -n $Failed_tests ]]; then
