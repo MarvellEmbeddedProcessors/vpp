@@ -50,7 +50,7 @@ launch_testpmd_tx_outb()
 {
 	testpmd_launch $1 \
 		"-c 0xF800 -a $PORT0,disable_xqe_drop=1" \
-		"--nb-cores=3 --forward-mode=txonly --tx-ip=192.168.$2.1,192.168.$2.2 --txq=3 --rxq=3 --eth-peer=0,00:01:02:03:04:01" \
+		"--nb-cores=3 --forward-mode=flowgen --flowgen-flows=$2 --txq=3 --rxq=3 --eth-peer=0,00:01:02:03:04:01" \
 		</dev/null 2>/dev/null &
 	sleep 1
 	testpmd_cmd $1 "port stop 0"
