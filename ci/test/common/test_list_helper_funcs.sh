@@ -107,7 +107,7 @@ function test_enabled()
 			echo "$test_num: $tst [RUN_TESTS]" >> $RUN_DIR/skip.list
 			return 77
 		fi
-	elif $(echo "$SKIP_TESTS" | grep -q "$tst"); then
+	elif $(echo "$SKIP_TESTS" | grep -qw "$tst"); then
 		echo "Skipping $tst on SKIP_TESTS list !!"
 		echo "$test_num: $tst [SKIP_TESTS]" >> $RUN_DIR/skip.list
 		return 77
