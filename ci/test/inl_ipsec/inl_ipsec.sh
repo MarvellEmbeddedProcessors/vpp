@@ -166,6 +166,7 @@ function configure_vm0()
 {
 	ip netns exec vm0 ip addr add 192.168.$X.2/24 dev $LBK1
 	ip netns exec vm0 ip addr add 1.1.$Y.1/24 dev $LBK1:1
+	ip netns exec vm0 ip link set $LBK1 mtu 9000
 	ip netns exec vm0 ip link set $LBK1 up
 	ip netns exec vm0 ip link set $LBK1 address $VM0_MAC
 	ip netns exec vm0 ip route add 192.168.$Y.0/24 via 192.168.$X.1
@@ -181,6 +182,7 @@ function configure_vm0()
 function configure_vm2()
 {
 	ip netns exec vm2 ip addr add 192.168.$Y.2/24 dev $LBK3
+	ip netns exec vm2 ip link set $LBK3 mtu 9000
 	ip netns exec vm2 ip link set $LBK3 up
 	ip netns exec vm2 ip link set lo up
 	ip netns exec vm2 ip link set $LBK3 address $VM2_MAC
@@ -275,7 +277,7 @@ CASE=(
 
 PING_RETRY=1
 PING_PKTS=320
-PKT_LIST="64 380 1410"
+PKT_LIST="64 380 1410 4000 8000"
 PKT_GAP="0.001"
 PING_ARGS=""
 
