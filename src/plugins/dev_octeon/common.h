@@ -21,7 +21,8 @@ oct_aura_free_all_buffers (vlib_main_t *vm, u64 aura_handle, u16 hdr_off,
   while ((iova = roc_npa_aura_op_alloc (aura_handle, 0)))
     {
       vlib_buffer_t *b = (void *) iova + hdr_off;
-      vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
+      u32 bi = vlib_get_buffer_index (vm, b);
+      vlib_buffer_free_no_next (vm, &bi, 1);
       n++;
       if (num_buffers && n == num_buffers)
 	break;
