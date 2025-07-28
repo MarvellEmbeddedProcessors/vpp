@@ -526,7 +526,8 @@ oct_txq_stop (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
 		cl->iova[i] &= OCT_BATCH_ALLOC_IOVA0_MASK;
 #endif
 	      vlib_buffer_t *b = (vlib_buffer_t *) (cl->iova[i] + off);
-	      vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
+	      u32 bi = vlib_get_buffer_index (vm, b);
+	      vlib_buffer_free_no_next (vm, &bi, 1);
 	      ctq->n_enq--;
 	    }
       }
