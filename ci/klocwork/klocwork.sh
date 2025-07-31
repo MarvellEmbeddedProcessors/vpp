@@ -25,7 +25,7 @@ function help() {
 	echo "==================="
 	echo "--build-root         | -r            : Build root directory"
 	echo "--deps_dir           | -d            : Deps dir"
-	echo "--cnxk_sdk_sysroot   | -s            : CNXK_SDK_SYSROOT path"
+	echo "--octeon_sdk_sysroot   | -s          : OCTEON_SDK_SYSROOT path"
 	echo ""
 	echo "Optional Arguments"
 	echo "==================="
@@ -45,10 +45,10 @@ fi
 
 BUILD_ROOT=
 DEPS_DIR=
-CNXK_SYSROOT=
+OCTEON_SYSROOT=
 export CROSS="aarch64-marvell-linux-gnu-"
 export OCTEON_VERSION="cn10k"
-export PLATFORM="cnxk"
+export PLATFORM="octeon"
 
 eval set -- "$OPTS"
 unset OPTS
@@ -56,7 +56,7 @@ while [[ $# -gt 1 ]]; do
 	case $1 in
 		-r|--build_root) shift; BUILD_ROOT=$(realpath $1);;
 		-d|--deps-dir) shift; DEPS_DIR=$(realpath $1);;
-		-s|--cnxk_sdk_sysroot) shift; CNXK_SYSROOT=$1;;
+		-s|--octeon_sdk_sysroot) shift; OCTEON_SYSROOT=$1;;
 		-o|--octeon-version) shift; OCTEON_VERSION=$1;;
 		-h|--help) help; exit 0;;
 		*) help; exit 1;;
@@ -64,14 +64,14 @@ while [[ $# -gt 1 ]]; do
 	shift
 done
 
-if [[ -z $DEPS_DIR || -z $BUILD_ROOT || -z $CNXK_SYSROOT ]]; then
-	echo "Deps directory, build root and cnxk_sdk_sysroot should be passed as argument !!"
+if [[ -z $DEPS_DIR || -z $BUILD_ROOT || -z $OCTEON_SYSROOT ]]; then
+	echo "Deps directory, build root and octeon_sdk_sysroot should be passed as argument !!"
 	help
 	exit 1
 fi
 
 DEPS_PREFIX=${DEPS_DIR}/deps-prefix
-export CNXK_SDK_SYSROOT=$CNXK_SYSROOT
+export OCTEON_SDK_SYSROOT=$OCTEON_SYSROOT
 export cnxk_c_flags="-I/${DEPS_PREFIX}/include/ -L/${DEPS_PREFIX}/lib"
 export UNATTENDED=y
 export DEBIAN_FRONTEND=noninteractive
