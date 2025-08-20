@@ -749,10 +749,10 @@ oct_ipsec_rlen_get (oct_ipsec_encap_len_t *encap, uint32_t plen)
 {
   uint32_t enc_payload_len;
 
-  enc_payload_len =
-    round_pow2 (plen + encap->roundup_len, encap->roundup_byte);
+  enc_payload_len = round_pow2 (plen + encap->roundup_len - encap->adj_len,
+				encap->roundup_byte);
 
-  return encap->partial_len + enc_payload_len;
+  return encap->partial_len + enc_payload_len + encap->adj_len;
 }
 
 static_always_inline u32
@@ -1314,7 +1314,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_buffer_t **b;
   u64 *lmt_line[4];
   u64 n_dwords[4];
-  oct_device_t *od;
 
   b = bufs;
 
@@ -1369,8 +1368,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  sess0 = pool_elt_at_index (im->inline_ipsec_sessions, sa0_index);
 	  if (!sess0->inst.w7.s.cptr)
 	    {
-	      od = oct_ipsec_get_oct_device_from_outb_sa (sa0_index);
-	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[od->nix_idx];
+	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[cd->nix_idx];
 	      sess0->sq =
 		((sa0_index % vlib_num_workers ()) + 1) % num_tx_queues;
 	    }
@@ -1385,10 +1383,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  sess1 = pool_elt_at_index (im->inline_ipsec_sessions, sa1_index);
 	  if (!sess1->inst.w7.s.cptr)
 	    {
-	      od = oct_ipsec_get_oct_device_from_outb_sa (sa1_index);
-	      sess1->inst.w7.s.cptr = (u64) sess1->out_sa[od->nix_idx];
 	      sess1->sq =
 		((sa1_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess1->inst.w7.s.cptr = (u64) sess1->out_sa[cd->nix_idx];
 	    }
 	  current_sa1_index = sa1_index;
 	  ALWAYS_ASSERT (current_sa0_index <
@@ -1401,10 +1398,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  sess2 = pool_elt_at_index (im->inline_ipsec_sessions, sa2_index);
 	  if (!sess2->inst.w7.s.cptr)
 	    {
-	      od = oct_ipsec_get_oct_device_from_outb_sa (sa2_index);
-	      sess2->inst.w7.s.cptr = (u64) sess2->out_sa[od->nix_idx];
 	      sess2->sq =
 		((sa2_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess2->inst.w7.s.cptr = (u64) sess2->out_sa[cd->nix_idx];
 	    }
 	  current_sa2_index = sa2_index;
 	  ALWAYS_ASSERT (current_sa2_index <
@@ -1417,10 +1413,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  sess3 = pool_elt_at_index (im->inline_ipsec_sessions, sa3_index);
 	  if (!sess3->inst.w7.s.cptr)
 	    {
-	      od = oct_ipsec_get_oct_device_from_outb_sa (sa3_index);
-	      sess3->inst.w7.s.cptr = (u64) sess3->out_sa[od->nix_idx];
 	      sess3->sq =
 		((sa3_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess3->inst.w7.s.cptr = (u64) sess3->out_sa[cd->nix_idx];
 	    }
 	  current_sa3_index = sa3_index;
 	  ALWAYS_ASSERT (current_sa3_index <
@@ -1621,10 +1616,9 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  sess0 = pool_elt_at_index (im->inline_ipsec_sessions, sa0_index);
 	  if (!sess0->inst.w7.s.cptr)
 	    {
-	      od = oct_ipsec_get_oct_device_from_outb_sa (sa0_index);
-	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[od->nix_idx];
 	      sess0->sq =
 		((sa0_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[cd->nix_idx];
 	    }
 	  current_sa0_index = sa0_index;
 	  ALWAYS_ASSERT (current_sa0_index <
