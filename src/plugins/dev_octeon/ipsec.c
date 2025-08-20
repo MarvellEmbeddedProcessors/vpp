@@ -399,10 +399,20 @@ oct_o20_ipsec_sa_common_param_fill (union roc_ow_ipsec_sa_word2 *w2,
 static_always_inline void
 oct_ipsec_sa_len_precalc (ipsec_sa_t *sa, oct_ipsec_encap_len_t *encap)
 {
-  if (ipsec_sa_is_set_IS_TUNNEL_V6 (sa))
-    encap->partial_len = ROC_CPT_TUNNEL_IPV6_HDR_LEN;
+  encap->adj_len = 0;
+
+  if (ipsec_sa_is_set_IS_TUNNEL (sa))
+    {
+      if (ipsec_sa_is_set_IS_TUNNEL_V6 (sa))
+	encap->partial_len = ROC_CPT_TUNNEL_IPV6_HDR_LEN;
+      else
+	encap->partial_len = ROC_CPT_TUNNEL_IPV4_HDR_LEN;
+    }
   else
-    encap->partial_len = ROC_CPT_TUNNEL_IPV4_HDR_LEN;
+    {
+      encap->partial_len = 0;
+      encap->adj_len = ROC_CPT_TUNNEL_IPV4_HDR_LEN;
+    }
 
   if (sa->protocol == IPSEC_PROTOCOL_ESP)
     {
@@ -1201,10 +1211,6 @@ oct_ipsec_check_support (ipsec_sa_t *sa)
   union cpt_eng_caps hw_caps = oct_cpt_get_eng_caps (ocm);
   u8 is_cipher_algo_supported;
   u8 is_auth_algo_supported;
-
-  if (!ipsec_sa_is_set_IS_TUNNEL (sa))
-    return clib_error_create (
-      "Transport mode SA is not supported in Inline IPsec operation");
 
   switch (sa->crypto_alg)
     {

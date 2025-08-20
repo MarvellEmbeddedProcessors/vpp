@@ -101,6 +101,7 @@ typedef struct
   uint8_t footer_len;
   uint8_t roundup_byte;
   uint8_t icv_len;
+  uint8_t adj_len;
 } oct_ipsec_encap_len_t;
 
 typedef struct
