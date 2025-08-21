@@ -892,6 +892,7 @@ oct_rx_inl_ipsec_vlib_from_cq (
   union nix_rx_parse_u *orig_rxp, *rxp;
   u32 is_fail, olen, esp_sz, l2_ol3_sz;
   u64 *wqe_ptr;
+  u32 err_flag;
   u8 frag_cnt;
 
   rxp = &d->parse.f;
@@ -905,7 +906,13 @@ oct_rx_inl_ipsec_vlib_from_cq (
   esp_sz = olen - l2_ol3_sz;
   b[0]->template = *bt;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
-  *err_flags |= ((d[0].parse.w[0] >> 20) & 0xFFF);
+  err_flag = ((d[0].parse.w[0] >> 20) & 0xFFF);
+  if (PREDICT_FALSE (err_flag))
+    {
+      b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+		       VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+      *err_flags |= err_flag;
+    }
 
   is_fail = !oct_ipsec_is_inl_op_success (cpt_hdr, fp_flags);
 
@@ -947,11 +954,20 @@ oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
 		     u32 *err_flags, u16 *next, u16 *buffer_next_index,
 		     const u64 fp_flags)
 {
+  u32 err_flag;
+
   b[0] = (vlib_buffer_t *) d->segs0[0] - 1;
   b[0]->template = *bt;
   ctx->n_rx_bytes += b[0]->current_length = d[0].sg0.seg1_size;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
-  *err_flags |= ((d[0].parse.w[0] >> 20) & 0xFFF);
+  err_flag = ((d[0].parse.w[0] >> 20) & 0xFFF);
+  if (PREDICT_FALSE (err_flag))
+    {
+      b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+		       VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+      *err_flags |= err_flag;
+    }
+
   ctx->n_segs += 1;
   if (d[0].sg0.segs > 1)
     oct_rx_attach_tail (vm, ctx, bt, b[0], d + 0);
@@ -1003,7 +1019,7 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_buffer_template_t bt = vnet_dev_get_rx_queue_if_buffer_template (rxq);
   u32 b0_err_flags = 0, b1_err_flags = 0;
   u32 b2_err_flags = 0, b3_err_flags = 0;
-  u32 n_left, err_flags = 0;
+  u32 n_left, err_flags = 0, err_flags_x4 = 0;
   oct_nix_rx_cqe_desc_t *d = ctx->next_desc;
   union cpt_parse_hdr_u *cpt_hdr0, *cpt_hdr1;
   union cpt_parse_hdr_u *cpt_hdr2, *cpt_hdr3;
@@ -1036,6 +1052,9 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   ROC_LMT_BASE_ID_GET (lbase, lmt_id);
   laddr = lbase;
   laddr += 8;
+
+  bt.flags |=
+    (VNET_BUFFER_F_L4_CHECKSUM_COMPUTED | VNET_BUFFER_F_L4_CHECKSUM_CORRECT);
 
   for (n_left = n; n_left >= 8; d += 4, n_left -= 4)
     {
@@ -1088,8 +1107,26 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  b2_err_flags = (d[2].parse.w[0] >> 20) & 0xFFF;
 	  b3_err_flags = (d[3].parse.w[0] >> 20) & 0xFFF;
 
-	  err_flags |=
+	  err_flags_x4 =
 	    b0_err_flags | b1_err_flags | b2_err_flags | b3_err_flags;
+
+	  if (PREDICT_FALSE (err_flags_x4))
+	    {
+	      err_flags |= err_flags_x4;
+
+	      if (b0_err_flags)
+		b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	      if (b1_err_flags)
+		b[1]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	      if (b2_err_flags)
+		b[2]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	      if (b3_err_flags)
+		b[3]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	    }
 
 	  if (fp_flags & OCT_FP_FLAG_TRACE_EN)
 	    {
@@ -1328,8 +1365,26 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  b2_err_flags = (d[2].parse.w[0] >> 20) & 0xFFF;
 	  b3_err_flags = (d[3].parse.w[0] >> 20) & 0xFFF;
 
-	  err_flags |=
+	  err_flags_x4 =
 	    b0_err_flags | b1_err_flags | b2_err_flags | b3_err_flags;
+
+	  if (PREDICT_FALSE (err_flags_x4))
+	    {
+	      err_flags |= err_flags_x4;
+
+	      if (b0_err_flags)
+		b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	      if (b1_err_flags)
+		b[1]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	      if (b2_err_flags)
+		b[2]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	      if (b3_err_flags)
+		b[3]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
+				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
+	    }
 
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
