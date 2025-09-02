@@ -179,7 +179,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     {
       if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE && vnet_dev_arg_get_bool (arg))
 	is_allmulti_enable = true;
-      if (arg->id == OCT_PORT_ARG_EN_ETH_FLOW_CTRL &&
+      if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
 	  vnet_dev_arg_get_bool (arg))
 	is_flow_ctrl_enable = true;
       if (arg->id == OCT_PORT_ARG_SWITCH_HDR_TYPE &&
