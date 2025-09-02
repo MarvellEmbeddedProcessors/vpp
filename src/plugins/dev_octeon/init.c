@@ -142,9 +142,9 @@ static vnet_dev_arg_t oct_port_args[] = {
     .default_val.boolean = false,
   },
   {
-    .id = OCT_PORT_ARG_EN_ETH_FLOW_CTRL,
-    .name = "eth_flow_ctrl",
-    .desc = "Enable Ethernet flow control support,"
+    .id = OCT_PORT_ARG_EN_ETH_PAUSE_FRAME,
+    .name = "eth_pause_frame",
+    .desc = "Enable ethernet pause frame (flow control) support, "
 	    "applicable to network devices only",
     .type = VNET_DEV_ARG_TYPE_BOOL,
     .default_val.boolean = false,
