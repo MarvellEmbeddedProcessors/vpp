@@ -31,10 +31,6 @@ static const u8 default_rss_key[] = {
   0x56, 0xbc, 0x78, 0x9a, 0x9a, 0x78, 0xbc, 0x56, 0xcd, 0x34, 0xef, 0x12
 };
 
-static const u32 default_rss_flowkey =
-  (FLOW_KEY_TYPE_IPV4 | FLOW_KEY_TYPE_IPV6 | FLOW_KEY_TYPE_TCP |
-   FLOW_KEY_TYPE_UDP | FLOW_KEY_TYPE_SCTP);
-
 static const u64 rxq_cfg =
   ROC_NIX_LF_RX_CFG_DIS_APAD | ROC_NIX_LF_RX_CFG_IP6_UDP_OPT |
   ROC_NIX_LF_RX_CFG_L2_LEN_ERR | ROC_NIX_LF_RX_CFG_DROP_RE |
@@ -179,13 +175,15 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     {
       if (arg->id == OCT_PORT_ARG_ALLMULTI_MODE && vnet_dev_arg_get_bool (arg))
 	is_allmulti_enable = true;
-      if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
-	  vnet_dev_arg_get_bool (arg))
+      else if (arg->id == OCT_PORT_ARG_EN_ETH_PAUSE_FRAME &&
+	       vnet_dev_arg_get_bool (arg))
 	is_flow_ctrl_enable = true;
-      if (arg->id == OCT_PORT_ARG_SWITCH_HDR_TYPE &&
-	  vnet_dev_arg_get_string (arg))
+      else if (arg->id == OCT_PORT_ARG_SWITCH_HDR_TYPE &&
+	       vnet_dev_arg_get_string (arg))
 	cp->npc.switch_header_type =
 	  oct_parse_switch_hdr_type ((char *) vnet_dev_arg_get_string (arg));
+      else if (arg->id == OCT_PORT_ARG_RSS_FLOW_KEY)
+	cp->rss_flowkey = vnet_dev_arg_get_uint32 (arg);
     }
 
   if ((rrv = roc_nix_lf_alloc (nix, port->intf.num_rx_queues,
@@ -246,7 +244,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
       return oct_roc_err (dev, rrv, "roc_nix_switch_hdr_set() failed");
     }
 
-  if ((rrv = roc_nix_rss_default_setup (nix, default_rss_flowkey)))
+  if ((rrv = roc_nix_rss_default_setup (nix, cp->rss_flowkey)))
     {
       oct_port_deinit (vm, port);
       return oct_roc_err (dev, rrv, "roc_nix_rss_default_setup() failed");
@@ -728,6 +726,7 @@ oct_port_add_del_eth_addr (vlib_main_t *vm, vnet_dev_port_t *port,
 {
   vnet_dev_t *dev = port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
+  oct_port_t *cp = vnet_dev_get_port_data (port);
   struct roc_nix *nix = cd->nix;
   vnet_dev_rv_t rv = VNET_DEV_OK;
   i32 rrv;
@@ -754,7 +753,7 @@ oct_port_add_del_eth_addr (vlib_main_t *vm, vnet_dev_port_t *port,
 		}
 	    }
 
-	  rrv = roc_nix_rss_default_setup (nix, default_rss_flowkey);
+	  rrv = roc_nix_rss_default_setup (nix, cp->rss_flowkey);
 	  if (rrv)
 	    rv = oct_roc_err (dev, rrv, "roc_nix_rss_default_setup() failed");
 	}
