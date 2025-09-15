@@ -92,6 +92,19 @@ vnet_dev_get_port_rx_node_idex (vnet_dev_port_t *port)
   return port->intf.rx_node_index;
 }
 
+static_always_inline vnet_dev_port_t *
+vnet_dev_get_port_from_sw_if_index (u32 sw_if_index)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_sw_interface_t *si;
+
+  si = vnet_get_sw_interface_or_null (vnm, sw_if_index);
+  if (!si)
+    return 0;
+
+  return vnet_dev_get_port_from_hw_if_index (si->hw_if_index);
+}
+
 static_always_inline vnet_dev_t *
 vnet_dev_by_index (u32 index)
 {
