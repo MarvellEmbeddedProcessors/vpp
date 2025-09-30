@@ -1103,6 +1103,10 @@ oct_ipsec_session_create (u32 sa_index)
   /* Initialize the ITF details in ipsec_session for tunnel SAs */
   if (ipsec_sa_is_set_IS_TUNNEL (sa))
     session->itf_sw_idx = ~0;
+  else
+    session->is_ipip_tp = (u8) ~0;
+  session->is_policy = (u8) ~0;
+
   return 0;
 }
 
@@ -1263,6 +1267,57 @@ oct_ipsec_check_support (ipsec_sa_t *sa)
   return 0;
 }
 
+/*
+ * Ensure fallback compatibility for policy-based tunnel SAs:
+ * - Verify oct-esp[4|6]-encrypt and esp[4|6]-encrypt have identical
+ *   next slot counts.
+ * - Ensure the software node has an arc to load-balance node.
+ */
+static_always_inline vnet_dev_rv_t
+oct_esp_fallback_init (vlib_main_t *vm, vnet_dev_t *dev)
+{
+  vlib_node_t *sw4, *hw4, *lb4;
+  vlib_node_t *sw6, *lb6;
+  u32 sw_cnt, hw_cnt;
+
+  sw4 = vlib_get_node_by_name (vm, (u8 *) "esp4-encrypt");
+  hw4 = vlib_get_node_by_name (vm, (u8 *) "oct-esp4-encrypt");
+  if (!sw4 || !hw4)
+    {
+      log_err (dev, "encrypt node(s) missing (v4): sw=%p hw=%p", sw4, hw4);
+      return VNET_DEV_ERR_INTERNAL;
+    }
+
+  sw_cnt = vec_len (sw4->next_nodes);
+  hw_cnt = vec_len (hw4->next_nodes);
+  if (sw_cnt != hw_cnt)
+    {
+      log_err (dev,
+	       "oct-esp[4|6]-encrypt next-node count mismatch (sw=%u hw=%u)",
+	       sw_cnt, hw_cnt);
+      return VNET_DEV_ERR_INTERNAL;
+    }
+
+  /* Add IPv4 arc to the software node*/
+  lb4 = vlib_get_node_by_name (vm, (u8 *) "ip4-load-balance");
+
+  if (lb4 && ~0 == vlib_node_get_next (vm, sw4->index, lb4->index))
+    vlib_node_add_next (vm, sw4->index, lb4->index);
+  else
+    return VNET_DEV_ERR_INTERNAL;
+
+  /* Add IPv6 arc to the software node*/
+  sw6 = vlib_get_node_by_name (vm, (u8 *) "esp6-encrypt");
+  lb6 = vlib_get_node_by_name (vm, (u8 *) "ip6-load-balance");
+
+  if (sw6 && lb6 && ~0 == vlib_node_get_next (vm, sw6->index, lb6->index))
+    vlib_node_add_next (vm, sw6->index, lb6->index);
+  else
+    return VNET_DEV_ERR_INTERNAL;
+
+  return VNET_DEV_OK;
+}
+
 vnet_dev_rv_t
 oct_init_ipsec_backend (vlib_main_t *vm, vnet_dev_t *dev)
 {
@@ -1271,10 +1326,10 @@ oct_init_ipsec_backend (vlib_main_t *vm, vnet_dev_t *dev)
   u32 idx;
 
   idx = ipsec_register_esp_backend (
-    vm, im, "octeon backend", "esp4-encrypt", "oct-esp4-encrypt-tun",
-    "esp4-decrypt", "esp4-decrypt-tun", "esp6-encrypt", "oct-esp6-encrypt-tun",
-    "esp6-decrypt", "esp6-decrypt-tun", "esp-mpls-encrypt-tun",
-    oct_ipsec_check_support, oct_add_del_session);
+    vm, im, "octeon backend", "oct-esp4-encrypt", "oct-esp4-encrypt-tun",
+    "esp4-decrypt", "esp4-decrypt-tun", "oct-esp6-encrypt",
+    "oct-esp6-encrypt-tun", "esp6-decrypt", "esp6-decrypt-tun",
+    "esp-mpls-encrypt-tun", oct_ipsec_check_support, oct_add_del_session);
 
   rv = ipsec_select_esp_backend (im, idx);
   if (rv)
@@ -1282,6 +1337,10 @@ oct_init_ipsec_backend (vlib_main_t *vm, vnet_dev_t *dev)
       log_err (dev, "OCTEON IPsec ESP backend selection failed");
       return VNET_DEV_ERR_INTERNAL;
     }
+
+  rv = oct_esp_fallback_init (vm, dev);
+  if (rv)
+    return rv;
 
   return VNET_DEV_OK;
 }

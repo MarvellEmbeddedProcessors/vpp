@@ -124,6 +124,8 @@ typedef struct
   struct cpt_inst_s inst;
   u16 sq;
   u32 itf_sw_idx;
+  u8 is_ipip_tp;
+  u8 is_policy;
   /* Packet length for IPsec encapsulation */
   oct_ipsec_encap_len_t encap;
 } oct_ipsec_session_t;

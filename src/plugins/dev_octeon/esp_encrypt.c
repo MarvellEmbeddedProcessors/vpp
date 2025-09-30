@@ -33,6 +33,26 @@ typedef struct
   vlib_buffer_t buf;
 } oct_esp_encrypt_trace_t;
 
+/* Policy-mode next nodes */
+#define foreach_oct_esp_encrypt_next                                          \
+  _ (DROP4, "ip4-drop")                                                       \
+  _ (DROP6, "ip6-drop")                                                       \
+  _ (DROP_MPLS, "mpls-drop")                                                  \
+  _ (SW_ESP4, "esp4-encrypt")                                                 \
+  _ (SW_ESP6, "esp6-encrypt")                                                 \
+  _ (HANDOFF_MPLS, "error-drop")                                              \
+  _ (INTERFACE_OUTPUT, "interface-output")
+
+/* clang-format off */
+typedef enum
+{
+#define _(v, s) OCT_ESP_ENCRYPT_NEXT_##v,
+  foreach_oct_esp_encrypt_next
+#undef _
+  OCT_ESP_ENCRYPT_N_NEXT,
+} oct_esp_encrypt_next_t;
+/* clang-format on */
+
 #define foreach_oct_esp_encrypt_tun_next                                      \
   _ (DROP4, "ip4-drop")                                                       \
   _ (DROP6, "ip6-drop")                                                       \
@@ -114,9 +134,9 @@ format_oct_esp_encrypt_trace (u8 *s, va_list *args)
 }
 
 static_always_inline void
-oct_esp_encrypt_tun_add_trace (vlib_main_t *vm, vlib_node_runtime_t *node,
-			       vlib_frame_t *frame, vlib_buffer_t *b,
-			       u32 next_index)
+oct_esp_encrypt_add_trace (vlib_main_t *vm, vlib_node_runtime_t *node,
+			   vlib_frame_t *frame, vlib_buffer_t *b,
+			   u32 next_index)
 {
   oct_esp_encrypt_trace_t *tr;
   ipsec_sa_t *sa;
@@ -141,11 +161,11 @@ oct_esp_encrypt_tun_add_trace (vlib_main_t *vm, vlib_node_runtime_t *node,
 }
 
 static_always_inline u32
-oct_ipsec_sa_index_get (vlib_buffer_t *b, const int is_tun)
+oct_ipsec_sa_index_get (vlib_buffer_t *b, const int is_route)
 {
   u32 sa_index, adj_index;
 
-  if (is_tun)
+  if (is_route)
     {
       adj_index = vnet_buffer (b)->ip.adj_index[VLIB_TX];
       sa_index = ipsec_tun_protect_get_sa_out (adj_index);
@@ -157,17 +177,33 @@ oct_ipsec_sa_index_get (vlib_buffer_t *b, const int is_tun)
   return sa_index;
 }
 
+/*
+ * Route-based SAs and policy based transport SAs go through the
+ * hardware offload path.
+ *
+ * Policy based tunnel SAs are sent for software ESP currently.
+ */
 static_always_inline uword
-oct_esp_encrypt_tun (vlib_main_t *vm, vlib_node_runtime_t *node,
-		     vlib_frame_t *frame, const int is_ip6)
+oct_esp_encrypt_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
+			vlib_frame_t *frame, const int is_ip6,
+			const int is_route)
 {
   u32 *from = vlib_frame_vector_args (frame);
   u32 n_left = frame->n_vectors;
-  vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
-  u32 sa0_index, sa1_index, sa2_index, sa3_index;
+  u16 workers = vlib_num_workers ();
+  vlib_buffer_t *bufs[VLIB_FRAME_SIZE];
+  vlib_buffer_t **b = bufs;
+  u16 nexts[VLIB_FRAME_SIZE];
+  u16 *next = nexts;
+  u32 sa0_index = 0, sa1_index = 0, sa2_index = 0, sa3_index = 0;
   u32 current_sa0_index = ~0, current_sa1_index = ~0;
   u32 current_sa2_index = ~0, current_sa3_index = ~0;
   ipsec_sa_t *sa0 = NULL, *sa1 = NULL, *sa2 = NULL, *sa3 = NULL;
+
+  u16 sw_next =
+    is_ip6 ? OCT_ESP_ENCRYPT_NEXT_SW_ESP6 : OCT_ESP_ENCRYPT_NEXT_SW_ESP4;
+  u16 hw_offload_next = is_route ? OCT_ESP_ENCRYPT_TUN_NEXT_ADJ_MIDCHAIN_TX :
+				   OCT_ESP_ENCRYPT_NEXT_INTERFACE_OUTPUT;
 
   vlib_get_buffers (vm, from, b, frame->n_vectors);
 
@@ -178,10 +214,10 @@ oct_esp_encrypt_tun (vlib_main_t *vm, vlib_node_runtime_t *node,
       vlib_prefetch_buffer_header (b[10], LOAD);
       vlib_prefetch_buffer_header (b[11], LOAD);
 
-      sa0_index = oct_ipsec_sa_index_get (b[0], 1);
-      sa1_index = oct_ipsec_sa_index_get (b[1], 1);
-      sa2_index = oct_ipsec_sa_index_get (b[2], 1);
-      sa3_index = oct_ipsec_sa_index_get (b[3], 1);
+      sa0_index = oct_ipsec_sa_index_get (b[0], is_route);
+      sa1_index = oct_ipsec_sa_index_get (b[1], is_route);
+      sa2_index = oct_ipsec_sa_index_get (b[2], is_route);
+      sa3_index = oct_ipsec_sa_index_get (b[3], is_route);
 
       if (sa0_index != current_sa0_index)
 	{
@@ -204,86 +240,194 @@ oct_esp_encrypt_tun (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  current_sa3_index = sa3_index;
 	}
 
-      /*
-       * If this is the first packet to use this SA, assign thread based
-       * on SA index. Don't need to do core-handoff on OCTEON as send queue
-       * is used based on thread index.
-       */
-      if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
-	sa0->thread_index = (sa0_index % vlib_num_workers ()) + 1;
-      if (PREDICT_FALSE (sa1->thread_index == 0xFFFF))
-	sa1->thread_index = (sa1_index % vlib_num_workers ()) + 1;
-      if (PREDICT_FALSE (sa2->thread_index == 0xFFFF))
-	sa2->thread_index = (sa2_index % vlib_num_workers ()) + 1;
-      if (PREDICT_FALSE (sa3->thread_index == 0xFFFF))
-	sa3->thread_index = (sa3_index % vlib_num_workers ()) + 1;
+      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa0))
+	{
+	  /* Route mode or Policy transport */
+	  if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
+	    sa0->thread_index = (sa0_index % workers) + 1;
+	  vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
+	  vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+	  next[0] = hw_offload_next;
 
-      vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
-      vnet_buffer (b[1])->ipsec.thread_index = sa1->thread_index;
-      vnet_buffer (b[2])->ipsec.thread_index = sa2->thread_index;
-      vnet_buffer (b[3])->ipsec.thread_index = sa3->thread_index;
+	  /* Policy transport */
+	  if (!is_route)
+	    vlib_buffer_advance (b[0], -vnet_buffer (b[0])->l3_hdr_offset);
+	}
+      else
+	/* Policy tunnel */
+	next[0] = sw_next;
 
-      vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
-      vnet_buffer (b[1])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
-      vnet_buffer (b[2])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
-      vnet_buffer (b[3])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa1))
+	{
+	  /* Route mode or Policy transport */
+	  if (PREDICT_FALSE (sa1->thread_index == 0xFFFF))
+	    sa1->thread_index = (sa1_index % workers) + 1;
+	  vnet_buffer (b[1])->ipsec.thread_index = sa1->thread_index;
+	  vnet_buffer (b[1])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+	  next[1] = hw_offload_next;
+
+	  /* Policy transport */
+	  if (!is_route)
+	    vlib_buffer_advance (b[1], -vnet_buffer (b[1])->l3_hdr_offset);
+	}
+      else
+	/* Policy tunnel */
+	next[1] = sw_next;
+
+      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa2))
+	{
+	  /* Route mode or Policy transport */
+	  if (PREDICT_FALSE (sa2->thread_index == 0xFFFF))
+	    sa2->thread_index = (sa2_index % workers) + 1;
+	  vnet_buffer (b[2])->ipsec.thread_index = sa2->thread_index;
+	  vnet_buffer (b[2])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+	  next[2] = hw_offload_next;
+
+	  /* Policy transport */
+	  if (!is_route)
+	    vlib_buffer_advance (b[2], -vnet_buffer (b[2])->l3_hdr_offset);
+	}
+      else
+	/* Policy tunnel */
+	next[2] = sw_next;
+
+      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa3))
+	{
+	  /* Route mode or Policy transport */
+	  if (PREDICT_FALSE (sa3->thread_index == 0xFFFF))
+	    sa3->thread_index = (sa3_index % workers) + 1;
+	  vnet_buffer (b[3])->ipsec.thread_index = sa3->thread_index;
+	  vnet_buffer (b[3])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+	  next[3] = hw_offload_next;
+
+	  /* Policy transport */
+	  if (!is_route)
+	    vlib_buffer_advance (b[3], -vnet_buffer (b[3])->l3_hdr_offset);
+	}
+      else
+	/* Policy tunnel */
+	next[3] = sw_next;
 
       b += 4;
+      next += 4;
       n_left -= 4;
     }
 
   current_sa0_index = ~0;
+  sa0 = NULL;
+
   while (n_left > 0)
     {
-      sa0_index = oct_ipsec_sa_index_get (b[0], 1);
-
+      sa0_index = oct_ipsec_sa_index_get (b[0], is_route);
       if (sa0_index != current_sa0_index)
 	{
 	  sa0 = ipsec_sa_get (sa0_index);
 	  current_sa0_index = sa0_index;
 	}
 
-      /*
-       * If this is the first packet to use this SA, assign thread based
-       * on SA index. Don't need to do core-handoff on OCTEON as send queue
-       * is used based on thread index.
-       */
+      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa0))
+	{
+	  /*
+	   * Route mode or Policy transport.
+	   *
+	   * If this is the first packet to use this SA, assign thread based
+	   * on SA index. Don't need to do core-handoff on OCTEON as send queue
+	   * is used based on thread index.
+	   */
+	  if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
+	    sa0->thread_index = (sa0_index % workers) + 1;
+	  vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
+	  vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+	  *next = hw_offload_next;
 
-      if (PREDICT_FALSE (0XFFFF == sa0->thread_index))
-	sa0->thread_index = (sa0_index % vlib_num_workers ()) + 1;
+	  /* Policy transport */
+	  if (!is_route)
+	    vlib_buffer_advance (b[0], -vnet_buffer (b[0])->l3_hdr_offset);
+	}
+      else
+	/* Policy tunnel */
+	*next = sw_next;
 
-      vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
-
-      vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
-
-      b++;
-      n_left--;
+      b += 1;
+      next += 1;
+      n_left -= 1;
     }
 
   if (PREDICT_FALSE (node->flags & VLIB_NODE_FLAG_TRACE))
     {
       n_left = frame->n_vectors;
       b = bufs;
+      next = nexts;
       while (n_left > 0)
 	{
 	  if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
-	    {
-	      oct_esp_encrypt_tun_add_trace (
-		vm, node, frame, b[0],
-		OCT_ESP_ENCRYPT_TUN_NEXT_ADJ_MIDCHAIN_TX);
-	    }
-
+	    oct_esp_encrypt_add_trace (vm, node, frame, b[0], *next);
 	  b += 1;
+	  next += 1;
 	  n_left--;
 	}
     }
-
-  vlib_buffer_enqueue_to_single_next (vm, node, from,
-				      OCT_ESP_ENCRYPT_TUN_NEXT_ADJ_MIDCHAIN_TX,
-				      frame->n_vectors);
-
+  vlib_buffer_enqueue_to_next (vm, node, from, nexts, frame->n_vectors);
   return frame->n_vectors;
 }
+
+/**
+ * @brief OCTEON ESP4 encryption policy node.
+ * @node oct-esp4-encrypt
+ *
+ * This is the OCTEON ESP4 policy-based encryption node.
+ *
+ * @param vm    vlib_main_t corresponding to the current thread
+ * @param node  vlib_node_runtime_t
+ * @param frame vlib_frame_t
+ */
+/* clang-format off */
+VLIB_NODE_FN (oct_esp4_encrypt_node) (vlib_main_t *vm,
+                                      vlib_node_runtime_t *node,
+                                      vlib_frame_t *frame)
+{
+  return oct_esp_encrypt_inline (vm, node, frame, 0, 0);
+}
+
+VLIB_REGISTER_NODE (oct_esp4_encrypt_node) = {
+  .name = "oct-esp4-encrypt",
+  .vector_size = sizeof (u32),
+  .format_trace = format_oct_esp_encrypt_trace,
+  .type = VLIB_NODE_TYPE_INTERNAL,
+  .n_next_nodes = OCT_ESP_ENCRYPT_N_NEXT,
+  .next_nodes = {
+#define _(next, node) [OCT_ESP_ENCRYPT_NEXT_##next] = node,
+    foreach_oct_esp_encrypt_next
+#undef _
+  },
+};
+/* clang-format on */
+
+/**
+ * @brief OCTEON ESP6 encryption policy node.
+ * @node oct-esp6-encrypt
+ *
+ * This is the OCTEON ESP4 policy-based encryption node.
+ *
+ * @param vm    vlib_main_t corresponding to the current thread
+ * @param node  vlib_node_runtime_t
+ * @param frame vlib_frame_t
+ */
+/* clang-format off */
+VLIB_NODE_FN (oct_esp6_encrypt_node) (vlib_main_t *vm,
+                                      vlib_node_runtime_t *node,
+                                      vlib_frame_t *frame)
+{
+  return oct_esp_encrypt_inline (vm, node, frame, 1, 0);
+}
+
+VLIB_REGISTER_NODE (oct_esp6_encrypt_node) = {
+  .name = "oct-esp6-encrypt",
+  .vector_size = sizeof (u32),
+  .type = VLIB_NODE_TYPE_INTERNAL,
+  .sibling_of = "oct-esp4-encrypt",
+};
+/* clang-format on */
 
 /**
  * @brief OCTEON ESP4 encryption tunnel node.
@@ -297,11 +441,10 @@ oct_esp_encrypt_tun (vlib_main_t *vm, vlib_node_runtime_t *node,
  */
 /* clang-format off */
 VLIB_NODE_FN (oct_esp4_encrypt_tun_node) (vlib_main_t *vm,
-					  vlib_node_runtime_t *node,
-					  vlib_frame_t *frame)
+                                          vlib_node_runtime_t *node,
+                                          vlib_frame_t *frame)
 {
-  return oct_esp_encrypt_tun (
-    vm, node, frame, 0);
+  return oct_esp_encrypt_inline (vm, node, frame, 0, 1);
 }
 
 VLIB_REGISTER_NODE (oct_esp4_encrypt_tun_node) = {
@@ -317,7 +460,6 @@ VLIB_REGISTER_NODE (oct_esp4_encrypt_tun_node) = {
   },
 
 };
-/* clang-format on */
 
 /**
  * @brief OCT ESP6 encryption tunnel node.
@@ -334,7 +476,7 @@ VLIB_NODE_FN (oct_esp6_encrypt_tun_node) (vlib_main_t *vm,
                                           vlib_node_runtime_t *node,
                                           vlib_frame_t *frame)
 {
-  return oct_esp_encrypt_tun (vm, node, frame, 1);
+  return oct_esp_encrypt_inline (vm, node, frame, 1, 1);
 }
 
 VLIB_REGISTER_NODE (oct_esp6_encrypt_tun_node) = {

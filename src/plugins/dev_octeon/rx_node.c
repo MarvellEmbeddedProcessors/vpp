@@ -523,6 +523,7 @@ oct_rx_ipsec_reassembly_failure (vlib_main_t *vm, vlib_buffer_template_t *bt,
   return frag_cnt;
 }
 
+/* Check if any ITF interface is protected using this SA */
 static_always_inline u32
 oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
 {
@@ -549,7 +550,10 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
 			    clib_host_to_net_u32 (sa->spi));
       rv = clib_bihash_search_inline_8_16 (&ipm->tun4_protect_by_key, &bkey40);
       if (PREDICT_FALSE (rv))
-	return ~0;
+	{
+	  session->itf_sw_idx = 0;
+	  return 0;
+	}
 
       clib_memcpy_fast (&res, &bkey40.value, sizeof (res));
     }
@@ -564,7 +568,10 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
       rv =
 	clib_bihash_search_inline_24_16 (&ipm->tun6_protect_by_key, &bkey60);
       if (PREDICT_FALSE (rv))
-	return ~0;
+	{
+	  session->itf_sw_idx = 0;
+	  return 0;
+	}
 
       clib_memcpy_fast (&res, &bkey60.value, sizeof (res));
     }
@@ -574,6 +581,55 @@ oct_ipsec_update_itf_sw_idx (oct_ipsec_session_t *session, u32 sa_idx)
   session->itf_sw_idx = res.sw_if_index;
 
   return res.sw_if_index;
+}
+
+/* Check if any IPIP interface is protected using this SA */
+static_always_inline u8
+oct_is_transport_protect_sa (oct_ipsec_session_t *session, u32 sa_idx)
+{
+  ipsec_tun_protect_t *itp;
+  u8 is_tp = 0;
+  u32 j = 0;
+
+  pool_foreach (itp, ipsec_tun_protect_pool)
+    {
+      /* skip itf protects */
+      if (itp->itp_flags & IPSEC_PROTECT_ITF)
+	continue;
+      for (j = 0; j < itp->itp_n_sa_in; j++)
+	if (itp->itp_in_sas[j] == sa_idx)
+	  {
+	    is_tp = 1;
+	    break;
+	  }
+      if (is_tp)
+	break;
+    }
+  session->is_ipip_tp = is_tp ? 1 : 0;
+  return session->is_ipip_tp;
+}
+
+/* Check if any inbound PROTECT policy references this SA */
+static_always_inline u8
+oct_is_policy_bound_sa (oct_ipsec_session_t *session, u32 sa_idx)
+{
+  ipsec_main_t *im = &ipsec_main;
+  ipsec_policy_t *p;
+  u8 found = 0;
+
+  pool_foreach (p, im->policies)
+    {
+      if (p->policy == IPSEC_POLICY_ACTION_PROTECT &&
+	  (p->type == IPSEC_SPD_POLICY_IP4_INBOUND_PROTECT ||
+	   p->type == IPSEC_SPD_POLICY_IP6_INBOUND_PROTECT) &&
+	  p->sa_index == sa_idx)
+	{
+	  found = 1;
+	  break;
+	}
+    }
+  session->is_policy = found ? 1 : 0;
+  return session->is_policy;
 }
 
 static_always_inline void
@@ -588,6 +644,8 @@ oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_node_runtime_t *node,
   oct_ipsec_inb_sa_priv_data_t *inb_sa_priv;
   vlib_buffer_t *b = buffs[*buffer_next_index - 1];
   u32 sa_idx, itf_sw_idx;
+  u8 is_ipip_tp;
+  u8 is_policy;
   vnet_interface_main_t *vim;
   oct_ipsec_main_t *oim = &oct_ipsec_main;
   vnet_main_t *vnm;
@@ -605,38 +663,55 @@ oct_rx_ipsec_update_counters (vlib_main_t *vm, vlib_node_runtime_t *node,
   ASSERT (sa_idx < vec_len (oim->inline_ipsec_sessions));
 
   session = pool_elt_at_index (oim->inline_ipsec_sessions, sa_idx);
-  itf_sw_idx = session->itf_sw_idx;
-  /*
-   * Check if itf_sw_idx is populated already. First packet on the SA
-   * populates the itf_sw_idx in the SA session.
-   */
-  if (PREDICT_FALSE (itf_sw_idx == ~0))
-    itf_sw_idx = oct_ipsec_update_itf_sw_idx (session, sa_idx);
 
   /* Update IPsec counters with inner IP length */
   vlib_increment_combined_counter (&ipsec_sa_counters, vm->thread_index,
 				   sa_idx, frag_cnt, ilen);
 
-  if (PREDICT_FALSE (itf_sw_idx == ~0))
-    {
-      b->error = node->errors[OCT_RX_NODE_CTR_ERR_NO_TUNNEL];
-      next[*buffer_next_index - 1] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+  /*
+   * Check if itf_sw_idx is populated already. First packet on the SA
+   * populates the itf_sw_idx in the SA session.
+   */
+  itf_sw_idx = session->itf_sw_idx;
 
-      if (reass_fail)
+  if (PREDICT_FALSE (itf_sw_idx == ~0))
+    itf_sw_idx = oct_ipsec_update_itf_sw_idx (session, sa_idx);
+
+  /* ITF tunnel protect present: update interface counters */
+  if (itf_sw_idx)
+    {
+      vlib_increment_combined_counter (rx_counter, vm->thread_index,
+				       itf_sw_idx, frag_cnt, ilen);
+      return;
+    }
+
+  /* Policy-bound SA check */
+  is_policy = session->is_policy;
+  if (PREDICT_FALSE (is_policy == (u8) ~0))
+    is_policy = oct_is_policy_bound_sa (session, sa_idx);
+  if (is_policy == 1)
+    return;
+
+  /* Transport-protect IPIP check */
+  is_ipip_tp = session->is_ipip_tp;
+  if (PREDICT_FALSE (is_ipip_tp == (u8) ~0))
+    is_ipip_tp = oct_is_transport_protect_sa (session, sa_idx);
+  if (is_ipip_tp == 1)
+    return;
+
+  /* Unattached SA: error */
+  b->error = node->errors[OCT_RX_NODE_CTR_ERR_NO_TUNNEL];
+  next[*buffer_next_index - 1] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
+  if (reass_fail)
+    {
+      for (i = frag_cnt; i > 1; i--)
 	{
-	  for (i = frag_cnt; i > 1; i--)
-	    {
-	      buffs[*buffer_next_index - frag_cnt]->error =
-		node->errors[OCT_RX_NODE_CTR_ERR_NO_TUNNEL];
-	      next[*buffer_next_index - frag_cnt] =
-		VNET_DEV_ETH_RX_PORT_NEXT_DROP;
-	    }
+	  buffs[*buffer_next_index - frag_cnt]->error =
+	    node->errors[OCT_RX_NODE_CTR_ERR_NO_TUNNEL];
+	  next[*buffer_next_index - frag_cnt] = VNET_DEV_ETH_RX_PORT_NEXT_DROP;
 	}
     }
-  else
-    /* Update ITF counters with inner IP length */
-    vlib_increment_combined_counter (rx_counter, vm->thread_index, itf_sw_idx,
-				     frag_cnt, ilen);
+  return;
 }
 
 static_always_inline u8
