@@ -1451,7 +1451,8 @@ oct_ipsec_inl_dev_outb_cfg (vnet_dev_t *dev, oct_inl_dev_cfg_t *inl_dev_cfg)
 }
 
 void
-oct_ipsec_sso_work_cb (uint64_t *gw, void *args, uint32_t soft_exp_event)
+oct_ipsec_sso_work_cb (uint64_t *gw, void *args, enum nix_inl_event_type type,
+		       void *cq_s, uint32_t port_id)
 {
   vlib_main_t *vm = vlib_get_main ();
   struct roc_ot_ipsec_outb_sa *sa;
@@ -1474,7 +1475,7 @@ oct_ipsec_sso_work_cb (uint64_t *gw, void *args, uint32_t soft_exp_event)
       break;
       /* Fall through */
     default:
-      if (soft_exp_event & 0x1)
+      if (type == NIX_INL_SOFT_EXPIRY_THRD)
 	{
 	  sa = (struct roc_ot_ipsec_outb_sa *) args;
 	  outb_priv = roc_nix_inl_ot_ipsec_outb_sa_sw_rsvd (sa);
