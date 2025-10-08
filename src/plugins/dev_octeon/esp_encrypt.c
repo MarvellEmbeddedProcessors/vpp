@@ -2,6 +2,7 @@
 #include <dev_octeon/ipsec.h>
 #include <vnet/ipsec/ipsec_tun.h>
 #include <vnet/fib/fib_entry.h>
+#include <vnet/dpo/dpo.h>
 
 extern oct_ipsec_main_t oct_ipsec_main;
 
@@ -133,6 +134,15 @@ format_oct_esp_encrypt_trace (u8 *s, va_list *args)
   return s;
 }
 
+/* Set next node for a policy mode tunnel packet */
+static_always_inline void
+oct_policy_tun_inline_mark (vlib_buffer_t *b, ipsec_sa_t *sa, u16 *next)
+{
+  dpo_id_t *dpo = &sa->dpo;
+  vnet_buffer (b)->ip.adj_index[VLIB_TX] = dpo->dpoi_index;
+  *next = dpo->dpoi_next_node;
+}
+
 static_always_inline void
 oct_esp_encrypt_add_trace (vlib_main_t *vm, vlib_node_runtime_t *node,
 			   vlib_frame_t *frame, vlib_buffer_t *b,
@@ -200,8 +210,6 @@ oct_esp_encrypt_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 current_sa2_index = ~0, current_sa3_index = ~0;
   ipsec_sa_t *sa0 = NULL, *sa1 = NULL, *sa2 = NULL, *sa3 = NULL;
 
-  u16 sw_next =
-    is_ip6 ? OCT_ESP_ENCRYPT_NEXT_SW_ESP6 : OCT_ESP_ENCRYPT_NEXT_SW_ESP4;
   u16 hw_offload_next = is_route ? OCT_ESP_ENCRYPT_TUN_NEXT_ADJ_MIDCHAIN_TX :
 				   OCT_ESP_ENCRYPT_NEXT_INTERFACE_OUTPUT;
 
@@ -240,73 +248,81 @@ oct_esp_encrypt_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  current_sa3_index = sa3_index;
 	}
 
-      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa0))
+      /*
+       * If this is the first packet to use this SA, assign thread based
+       * on SA index. Don't need to do core-handoff on OCTEON as send queue
+       * is used based on thread index.
+       */
+      if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
+	sa0->thread_index = (sa0_index % workers) + 1;
+      if (PREDICT_FALSE (sa1->thread_index == 0xFFFF))
+	sa1->thread_index = (sa1_index % workers) + 1;
+      if (PREDICT_FALSE (sa2->thread_index == 0xFFFF))
+	sa2->thread_index = (sa2_index % workers) + 1;
+      if (PREDICT_FALSE (sa3->thread_index == 0xFFFF))
+	sa3->thread_index = (sa3_index % workers) + 1;
+
+      vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
+      vnet_buffer (b[1])->ipsec.thread_index = sa1->thread_index;
+      vnet_buffer (b[2])->ipsec.thread_index = sa2->thread_index;
+      vnet_buffer (b[3])->ipsec.thread_index = sa3->thread_index;
+
+      vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+      vnet_buffer (b[1])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+      vnet_buffer (b[2])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+      vnet_buffer (b[3])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+
+      if (is_route)
 	{
-	  /* Route mode or Policy transport */
-	  if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
-	    sa0->thread_index = (sa0_index % workers) + 1;
-	  vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
-	  vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
+	  /* Route mode */
 	  next[0] = hw_offload_next;
-
-	  /* Policy transport */
-	  if (!is_route)
-	    vlib_buffer_advance (b[0], -vnet_buffer (b[0])->l3_hdr_offset);
-	}
-      else
-	/* Policy tunnel */
-	next[0] = sw_next;
-
-      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa1))
-	{
-	  /* Route mode or Policy transport */
-	  if (PREDICT_FALSE (sa1->thread_index == 0xFFFF))
-	    sa1->thread_index = (sa1_index % workers) + 1;
-	  vnet_buffer (b[1])->ipsec.thread_index = sa1->thread_index;
-	  vnet_buffer (b[1])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
 	  next[1] = hw_offload_next;
-
-	  /* Policy transport */
-	  if (!is_route)
-	    vlib_buffer_advance (b[1], -vnet_buffer (b[1])->l3_hdr_offset);
-	}
-      else
-	/* Policy tunnel */
-	next[1] = sw_next;
-
-      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa2))
-	{
-	  /* Route mode or Policy transport */
-	  if (PREDICT_FALSE (sa2->thread_index == 0xFFFF))
-	    sa2->thread_index = (sa2_index % workers) + 1;
-	  vnet_buffer (b[2])->ipsec.thread_index = sa2->thread_index;
-	  vnet_buffer (b[2])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
 	  next[2] = hw_offload_next;
-
-	  /* Policy transport */
-	  if (!is_route)
-	    vlib_buffer_advance (b[2], -vnet_buffer (b[2])->l3_hdr_offset);
-	}
-      else
-	/* Policy tunnel */
-	next[2] = sw_next;
-
-      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa3))
-	{
-	  /* Route mode or Policy transport */
-	  if (PREDICT_FALSE (sa3->thread_index == 0xFFFF))
-	    sa3->thread_index = (sa3_index % workers) + 1;
-	  vnet_buffer (b[3])->ipsec.thread_index = sa3->thread_index;
-	  vnet_buffer (b[3])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
 	  next[3] = hw_offload_next;
-
-	  /* Policy transport */
-	  if (!is_route)
-	    vlib_buffer_advance (b[3], -vnet_buffer (b[3])->l3_hdr_offset);
 	}
       else
-	/* Policy tunnel */
-	next[3] = sw_next;
+	{
+	  /* Policy mode */
+	  if (ipsec_sa_is_set_IS_TUNNEL (sa0))
+	    {
+	      oct_policy_tun_inline_mark (b[0], sa0, &next[0]);
+	    }
+	  else
+	    {
+	      next[0] = hw_offload_next;
+	      vlib_buffer_advance (b[0], -vnet_buffer (b[0])->l3_hdr_offset);
+	    }
+
+	  if (ipsec_sa_is_set_IS_TUNNEL (sa1))
+	    {
+	      oct_policy_tun_inline_mark (b[1], sa1, &next[1]);
+	    }
+	  else
+	    {
+	      next[1] = hw_offload_next;
+	      vlib_buffer_advance (b[1], -vnet_buffer (b[1])->l3_hdr_offset);
+	    }
+
+	  if (ipsec_sa_is_set_IS_TUNNEL (sa2))
+	    {
+	      oct_policy_tun_inline_mark (b[2], sa2, &next[2]);
+	    }
+	  else
+	    {
+	      next[2] = hw_offload_next;
+	      vlib_buffer_advance (b[2], -vnet_buffer (b[2])->l3_hdr_offset);
+	    }
+
+	  if (ipsec_sa_is_set_IS_TUNNEL (sa3))
+	    {
+	      oct_policy_tun_inline_mark (b[3], sa3, &next[3]);
+	    }
+	  else
+	    {
+	      next[3] = hw_offload_next;
+	      vlib_buffer_advance (b[3], -vnet_buffer (b[3])->l3_hdr_offset);
+	    }
+	}
 
       b += 4;
       next += 4;
@@ -325,28 +341,29 @@ oct_esp_encrypt_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  current_sa0_index = sa0_index;
 	}
 
-      if (is_route || !ipsec_sa_is_set_IS_TUNNEL (sa0))
-	{
-	  /*
-	   * Route mode or Policy transport.
-	   *
-	   * If this is the first packet to use this SA, assign thread based
-	   * on SA index. Don't need to do core-handoff on OCTEON as send queue
-	   * is used based on thread index.
-	   */
-	  if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
-	    sa0->thread_index = (sa0_index % workers) + 1;
-	  vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
-	  vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
-	  *next = hw_offload_next;
+      if (PREDICT_FALSE (sa0->thread_index == 0xFFFF))
+	sa0->thread_index = (sa0_index % workers) + 1;
+      vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
+      vnet_buffer (b[0])->oflags |= VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD;
 
-	  /* Policy transport */
-	  if (!is_route)
-	    vlib_buffer_advance (b[0], -vnet_buffer (b[0])->l3_hdr_offset);
+      if (is_route)
+	{
+	  /* Route mode */
+	  *next = hw_offload_next;
 	}
       else
-	/* Policy tunnel */
-	*next = sw_next;
+	{
+	  /* Policy mode */
+	  if (ipsec_sa_is_set_IS_TUNNEL (sa0))
+	    {
+	      oct_policy_tun_inline_mark (b[0], sa0, next);
+	    }
+	  else
+	    {
+	      *next = hw_offload_next;
+	      vlib_buffer_advance (b[0], -vnet_buffer (b[0])->l3_hdr_offset);
+	    }
+	}
 
       b += 1;
       next += 1;
