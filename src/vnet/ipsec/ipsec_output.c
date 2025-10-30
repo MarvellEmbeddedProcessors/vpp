@@ -86,7 +86,7 @@ ipsec_output_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
   while (n_left_from > 0)
     {
-      u32 bi0, pi0, bi1;
+      u32 bi0, pi0 = ~0, bi1;
       vlib_buffer_t *b0, *b1;
       ipsec_policy_t *p0 = NULL;
       ip4_header_t *ip0;
@@ -98,6 +98,14 @@ ipsec_output_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
       bi0 = from[0];
       b0 = vlib_get_buffer (vm, bi0);
+
+      /* Skip policy re-match if marked for outbound HW IPsec offload */
+      if (PREDICT_FALSE (vnet_buffer (b0)->oflags &
+			 VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD))
+	{
+	  next_node_index = get_next_output_feature_node_index (b0, node);
+	  goto next;
+	}
       if (n_left_from > 1)
 	{
 	  bi1 = from[1];
@@ -280,6 +288,7 @@ ipsec_output_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  next_node_index = im->error_drop_node_index;
 	}
 
+    next:
       from += 1;
       n_left_from -= 1;
 
