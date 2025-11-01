@@ -1552,6 +1552,13 @@ oct_ipsec_sso_work_cb (uint64_t *gw, void *args, enum nix_inl_event_type type,
   return;
 }
 
+static int
+oct_idev_altaf_set (struct plt_pci_device *pci_dev)
+{
+  roc_idev_altaf_set (oct_main.enable_optee);
+  return 0;
+}
+
 vnet_dev_rv_t
 oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
 {
@@ -1573,6 +1580,7 @@ oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
   if (roc_feature_nix_has_inl_multi_queue ())
     inl_dev_main->inl_dev->nb_inb_cptlfs = 1;
 
+  roc_sso_altaf_cb_register (oct_idev_altaf_set);
   if ((rrv = roc_nix_inl_dev_init (inl_dev_main->inl_dev)) < 0)
     {
       log_err (dev, "roc_nix_inl_dev_init: %s [%d]", roc_error_msg_get (rrv),

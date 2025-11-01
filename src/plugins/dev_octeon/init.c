@@ -126,6 +126,13 @@ static vnet_dev_arg_t oct_drv_args[] = {
     .default_val.uint32 = 8192,
   },
   {
+    .id = OCT_DRV_ARG_ENABLE_OPTEE,
+    .name = "enable_optee",
+    .desc = "Use optee firmware",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = false,
+  },
+  {
     .id = OCT_DRV_ARG_END,
     .name = "end",
     .desc = "Argument end",
@@ -288,6 +295,9 @@ oct_config_args (vlib_main_t *vm, vnet_dev_driver_t *drv)
 
 	  if (arg->id == OCT_DRV_ARG_IPSEC_OUT_MAX_SA)
 	    oct_inl_dev_main.out_max_sa = vnet_dev_arg_get_uint32 (arg);
+
+	  if (arg->id == OCT_DRV_ARG_ENABLE_OPTEE)
+	    oct_main.enable_optee = vnet_dev_arg_get_bool (arg);
 	}
       oct_main.is_config_done = 1;
     }
@@ -821,6 +831,7 @@ oct_plugin_init (vlib_main_t *vm)
   /* set default values in oct_main */
   oct_main.npa_max_pools = OCT_NPA_MAX_POOLS;
   oct_main.use_single_rx_aura = 1;
+  oct_main.enable_optee = 0;
   oct_inl_dev_main.in_min_spi = 0;
   oct_inl_dev_main.in_max_spi = 8192;
   oct_inl_dev_main.out_max_sa = 8192;

@@ -35,6 +35,7 @@ typedef enum
   OCT_DRV_ARG_IPSEC_IN_MIN_SPI,
   OCT_DRV_ARG_IPSEC_IN_MAX_SPI,
   OCT_DRV_ARG_IPSEC_OUT_MAX_SA,
+  OCT_DRV_ARG_ENABLE_OPTEE,
   OCT_DRV_ARG_END,
 } oct_drv_args_t;
 
@@ -179,6 +180,7 @@ typedef struct
 {
   u8 inl_dev_initialized : 1;
   u8 use_single_rx_aura : 1;
+  u8 enable_optee : 1;
   u8 is_config_done;
   u32 npa_max_pools;
   u64 rx_aura_handle;
