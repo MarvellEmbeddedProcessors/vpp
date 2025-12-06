@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2025 Marvell.
+ * SPDX-License-Identifier: Apache-2.0
+ * https://spdx.org/licenses/Apache-2.0.html
+ */
+
 #include <dev_octeon/octeon.h>
 #include <dev_octeon/ipsec.h>
 #include <vnet/ipsec/ipsec_tun.h>
