@@ -223,8 +223,13 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
     }
   cp->tm_initialized = 1;
 
-  if ((rrv = roc_nix_tm_hierarchy_enable (nix, ROC_NIX_TM_DEFAULT,
-					  /* xmit_enable */ 0)))
+  if (roc_nix_is_sdp (nix) && ifs->num_tx_queues > 1)
+    rrv = roc_nix_tm_hierarchy_enable (nix, ROC_NIX_TM_SDP,
+				       /* xmit_enable */ 0);
+  else
+    rrv = roc_nix_tm_hierarchy_enable (nix, ROC_NIX_TM_DEFAULT,
+				       /* xmit_enable */ 0);
+  if (rrv)
     {
       oct_port_deinit (vm, port);
       return oct_roc_err (dev, rrv, "roc_nix_tm_hierarchy_enable() failed");
