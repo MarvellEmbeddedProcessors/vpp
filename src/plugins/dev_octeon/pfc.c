@@ -305,6 +305,7 @@ oct_pfc_sys_disable_pause_frame_flow_ctrl (u32 hw_if_idx, u32 disable)
   vnet_dev_port_t *port =
     vnet_dev_get_port_from_dev_instance (hi->dev_instance);
   vnet_dev_t *dev = port->dev;
+  vnet_dev_arg_t *arg;
   oct_device_t *cd = vnet_dev_get_data (dev);
   struct roc_nix *nix = cd->nix;
   struct roc_nix_sq *sq;
@@ -364,6 +365,14 @@ oct_pfc_sys_disable_pause_frame_flow_ctrl (u32 hw_if_idx, u32 disable)
     return oct_roc_err (dev, rc, "Failed to disable flow control on MAC");
 
   cd->mode = PFC_ETH_FC_NONE;
+
+  arg = vnet_dev_get_port_arg_by_id (port, OCT_PORT_ARG_EN_ETH_PAUSE_FRAME);
+  if (arg)
+    {
+      arg->val.boolean = false;
+      arg->val_set = 0;
+    }
+
   return rc;
 }
 
