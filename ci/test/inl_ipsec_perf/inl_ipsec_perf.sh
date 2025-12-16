@@ -18,6 +18,25 @@ TXWAIT=15
 RXWAIT=5
 WS=2
 IS_RXPPS_TXTPMD=0
+
+function core_index()
+{
+	local core=$1
+	local idx=0
+	local c
+
+	for c in ${CORES[@]}
+	do
+		if [[ "$c" == "$core" ]]; then
+			echo "$idx"
+			return 0
+		fi
+		((++idx))
+	done
+
+	echo "ERROR: core_index: core '$core' not found in CORES='${CORES[*]}'" >&2
+	return 1
+}
 TARGET_SSH_CMD=${TARGET_SSH_CMD:-"ssh -o LogLevel=ERROR -o ServerAliveInterval=30 \
 	-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"}
 TARGET_SSH_CMD="$TARGET_SSH_CMD -n"
@@ -209,8 +228,9 @@ function supported_by_9k()
 function run_vpp_ipsec()
 {
 	local i
+	local mode=${2:-"itf"}
 	n_CORES=$1
-	echo "vpp outb num_cores:$n_CORES"
+	echo "vpp outb num_cores:$n_CORES mode:$mode"
 	IS_RXPPS_TXTPMD=1
 	rm -rf /tmp/inl_ipsec_perf
 	mkdir -p /tmp/inl_ipsec_perf
@@ -224,23 +244,52 @@ function run_vpp_ipsec()
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF1 driver octeon"
 	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF1 port 0 name eth1 num-rx-queues 8 tx-queues-size 16384"
 	vpp_exec_file inl_ipsec_perf /tmp/inl_ipsec_perf/${CFG[$Y]}
+
 	for (( i=0; i<$n_CORES; i++ ))
 	do
-		if [[ $Y == 0 ]]; then
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
-		else
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
+		# Determine if transport mode
+		local is_transport=0
+		if [[ "$mode" == "policy_transport" ]]; then
+			is_transport=1
 		fi
 
-		vpp_exec_cmd inl_ipsec_perf "ipsec itf create"
-		vpp_exec_cmd inl_ipsec_perf "ipsec tunnel protect sa-out $((i+11)) sa-in $((i+1)) ipsec$i"
-		vpp_exec_cmd inl_ipsec_perf "set int state ipsec$i up"
+		if [[ $Y == 0 ]]; then
+			if [[ $is_transport -eq 1 ]]; then
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+			else
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
+			fi
+		else
+			if [[ $is_transport -eq 1 ]]; then
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128"
+			else
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
+			fi
+		fi
 
-		vpp_exec_cmd inl_ipsec_perf "ip route add 10.253.0.$i/32 via ipsec$i"
+		if [[ "$mode" == "itf" ]]; then
+			vpp_exec_cmd inl_ipsec_perf "ipsec itf create"
+			vpp_exec_cmd inl_ipsec_perf "ipsec tunnel protect sa-out $((i+11)) sa-in $((i+1)) ipsec$i"
+			vpp_exec_cmd inl_ipsec_perf "set int state ipsec$i up"
+			vpp_exec_cmd inl_ipsec_perf "ip route add 10.253.0.$i/32 via ipsec$i"
+		else
+			if [[ $i -eq 0 ]]; then
+				vpp_exec_cmd inl_ipsec_perf "ipsec spd add 1"
+				vpp_exec_cmd inl_ipsec_perf "set interface ipsec spd eth0 1"
+			fi
+			# Flowgen uses a fixed/local src range across flows; keep local-ip wide
+			# so multi-core flows still match on remote-ip.
+			vpp_exec_cmd inl_ipsec_perf "ipsec policy add spd 1 outbound priority 100 action protect sa $((i+11)) local-ip-range 10.254.0.0-10.254.0.255 remote-ip-range 10.253.0.$i-10.253.0.$i"
+			vpp_exec_cmd inl_ipsec_perf "ipsec policy add spd 1 outbound priority 100 action bypass sa 10 local-ip-range $((i+1)).1.1.2-$((i+1)).1.1.2 remote-ip-range $((i+1)).1.1.1-$((i+1)).1.1.1"
+			vpp_exec_cmd inl_ipsec_perf "ip route add 10.253.0.$i/32 via eth0"
+		fi
+
+		vpp_exec_cmd inl_ipsec_perf "set ip neighbor eth0 10.253.0.$i 00:16:3e:7e:94:9a"
 		vpp_exec_cmd inl_ipsec_perf "set ip neighbor eth0 $((i+1)).1.1.1 00:16:3e:7e:94:9a"
-
 		vpp_exec_cmd inl_ipsec_perf "ip route add $((i+1)).1.1.0/24 via eth0"
 
 		vpp_exec_cmd inl_ipsec_perf "test flow add dst-ip 10.253.0.$i/255.255.255.255 proto 17 redirect-to-queue $i"
@@ -253,8 +302,9 @@ function run_vpp_ipsec()
 function run_vpp_ipsec_inb()
 {
 	local i
+	local mode=${2:-"itf"}
 	n_CORES=$1
-	echo "vpp inb num_cores:$n_CORES"
+	echo "vpp inb num_cores:$n_CORES mode:$mode"
 	IS_RXPPS_TXTPMD=1
 	rm -rf /tmp/inl_ipsec_perf
 	mkdir -p /tmp/inl_ipsec_perf
@@ -264,24 +314,49 @@ function run_vpp_ipsec_inb()
 	# Inline Protocol
 	vpp_launch inl_ipsec_perf_$n_CORES
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF0 driver octeon"
-	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF0 port 0 name eth0 num-rx-queues 8 tx-queues-size 16384"
+	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF0 port 0 name eth0 num-rx-queues $n_CORES tx-queues-size 16384"
 	vpp_exec_cmd inl_ipsec_perf "device attach pci/$IF1 driver octeon"
-	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF1 port 0 name eth1 num-rx-queues 8 tx-queues-size 16384"
+	vpp_exec_cmd inl_ipsec_perf "device create-interface pci/$IF1 port 0 name eth1 num-rx-queues $n_CORES tx-queues-size 16384"
 	vpp_exec_file inl_ipsec_perf /tmp/inl_ipsec_perf/${IP_IB_CFG[$Y]}
 
 	for (( i=0; i<$n_CORES; i++ ))
 	do
-		if [[ $Y == 0 ]]; then
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.1 dst $((i+1)).1.1.2 inbound"
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.1.2 dst $((i+1)).1.1.1"
-		else
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.2.1 dst $((i+1)).1.2.2 inbound"
-			vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.2.2 dst $((i+1)).1.2.1"
+		# Determine if transport mode
+		local is_transport=0
+		if [[ "$mode" == "policy_transport" ]]; then
+			is_transport=1
 		fi
 
-		vpp_exec_cmd inl_ipsec_perf "ipsec itf create"
-		vpp_exec_cmd inl_ipsec_perf "ipsec tunnel protect sa-in $((i+1)) sa-out $((i+11)) ipsec$i"
-		vpp_exec_cmd inl_ipsec_perf "set int state ipsec$i up"
+		if [[ $Y == 0 ]]; then
+			if [[ $is_transport -eq 1 ]]; then
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+			else
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.2.1 dst $((i+1)).1.2.2 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src $((i+1)).1.2.2 dst $((i+1)).1.2.1"
+			fi
+		else
+			if [[ $is_transport -eq 1 ]]; then
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128"
+			else
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+1)) spi $((i+1)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.2.1 dst $((i+1)).1.2.2 inbound"
+				vpp_exec_cmd inl_ipsec_perf "ipsec sa add $((i+11)) spi $((i+101)) esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 tunnel src $((i+1)).1.2.2 dst $((i+1)).1.2.1"
+			fi
+		fi
+
+		if [[ "$mode" == "itf" ]]; then
+			vpp_exec_cmd inl_ipsec_perf "ipsec itf create"
+			vpp_exec_cmd inl_ipsec_perf "ipsec tunnel protect sa-in $((i+1)) sa-out $((i+11)) ipsec$i"
+			vpp_exec_cmd inl_ipsec_perf "set int state ipsec$i up"
+		else
+			if [[ $i -eq 0 ]]; then
+				vpp_exec_cmd inl_ipsec_perf "ipsec spd add 1"
+				vpp_exec_cmd inl_ipsec_perf "set interface ipsec spd eth0 1"
+				vpp_exec_cmd inl_ipsec_perf "ipsec policy add spd 1 outbound priority 1 action bypass"
+			fi
+			vpp_exec_cmd inl_ipsec_perf "ipsec policy add spd 1 inbound priority $((100+i)) action protect sa $((i+1)) local-ip-range $((i+1)).1.2.2-$((i+1)).1.2.2 remote-ip-range $((i+1)).1.2.1-$((i+1)).1.2.1"
+		fi
 
 		vpp_exec_cmd inl_ipsec_perf "test flow add dst-ip 192.168.2.$((i+2))/255.255.255.255 proto 17 redirect-to-queue $i"
 		vpp_exec_cmd inl_ipsec_perf "test flow enable index $((i+2)) eth0"
@@ -347,7 +422,7 @@ function pmd_tx_launch()
 	else
 		testpmd_launch "$TPMD_TX_PREFIX" \
 			"-c $C_MSK -a $LIF1" \
-			"--nb-cores=2 --forward-mode=txonly --tx-ip=192.168.$X.1,192.168.$X.2"
+			"--nb-cores=2 --forward-mode=flowgen --flowgen-flows=$1 --txq=3 --rxq=3 --eth-peer=0,00:01:02:03:04:01"
 		testpmd_cmd $TPMD_TX_PREFIX "port stop 0"
 		testpmd_cmd $TPMD_TX_PREFIX "set flow_ctrl rx off 0"
 		testpmd_cmd $TPMD_TX_PREFIX "set flow_ctrl tx off 0"
@@ -495,7 +570,7 @@ function start_testpmd()
 		exec_testpmd_cmd_gen "start" $TPMD_TX_PREFIX "NOP"
 	else
 		testpmd_cmd "$TPMD_RX_PREFIX" "start"
-		testpmd_cmd "$TPMD_TX_PREFIX" "start"
+		testpmd_cmd "$TPMD_TX_PREFIX" "start tx_first 64"
 	fi
 }
 
@@ -539,6 +614,9 @@ function outb_perf()
 	local algo
 	local rn
 	local i
+	local mode=$4
+	local cores=$3
+	local cn=${5:-$(core_index "$cores")}
 
 	[[ $X = 1 ]] && algo="aes-cbc_sha1-hmac" || algo="aes-gcm"
 
@@ -558,7 +636,7 @@ function outb_perf()
 				vpp_stats_all inl_ipsec_perf
 				vpp_cleanup inl_ipsec_perf
 				echo "Restart vpp"
-				run_vpp_ipsec $3
+				run_vpp_ipsec $3 "$mode"
 			fi
 			start_testpmd
 			pmd_rx_dry_run
@@ -571,7 +649,7 @@ function outb_perf()
 			done
 			stop_testpmd
 			avg_pps=$(echo "(($rx_pps) / $NUM_CAPTURE)" | bc)
-			p=${PASS_PPS_TABLE[$rn,$2]}
+			p=${PASS_PPS_TABLE[$rn,$cn]}
 			echo "pktsize: $pktsz avg_pps: $avg_pps"
 			echo "pass_pps $p"
 			if (( $(echo "$avg_pps < $p" | bc) )); then
@@ -586,7 +664,7 @@ function outb_perf()
 		done
 		if [[ $tcnt -gt $MAX_TRY_CNT ]]; then
 			echo "Test Failed"
-			Failed_tests="$Failed_tests \"${TN[$Y]} outbound $algo pktsize:$pktsz num_cores:$3\""
+			Failed_tests="$Failed_tests \"${TN[$Y]} outbound $algo pktsize:$pktsz num_cores:$3 mode:$mode\""
 		fi
 		((++rn))
 	done
@@ -601,6 +679,9 @@ function inb_perf()
 	local algo
 	local rn
 	local i
+	local mode=$4
+	local cores=$3
+	local cn=${5:-$(core_index "$cores")}
 
 	[[ $X = 1 ]] && algo="aes-cbc_sha1-hmac" || algo="aes-gcm"
 
@@ -621,7 +702,7 @@ function inb_perf()
 				vpp_stats_all inl_ipsec_perf
 				vpp_cleanup inl_ipsec_perf
 				echo "Restart vpp"
-				run_vpp_ipsec_inb $3
+				run_vpp_ipsec_inb $3 "$mode"
 			fi
 			start_testpmd
 			pmd_rx_dry_run
@@ -634,7 +715,7 @@ function inb_perf()
 			done
 			stop_testpmd
 			avg_pps=$(echo "(($rx_pps) / $NUM_CAPTURE)" | bc)
-			p=${PASS_PPS_TABLE[$rn,$2]}
+			p=${PASS_PPS_TABLE[$rn,$cn]}
 			echo "pktsize: $pktsz avg_pps: $avg_pps"
 			echo "pass_pps $p"
 			if (( $(echo "$avg_pps < $p" | bc) )); then
@@ -651,7 +732,7 @@ function inb_perf()
 		if [[ $tcnt -gt $MAX_TRY_CNT ]]; then
 			echo "Test Failed"
 			quit_testpmd "$TPMD_TX_PREFIX"
-			Failed_tests="$Failed_tests \"${TN[$Y]} inbound $algo pktsize:$pktsz num_cores:$3\""
+			Failed_tests="$Failed_tests \"${TN[$Y]} inbound $algo pktsize:$pktsz num_cores:$3 mode:$mode\""
 		fi
 		((++rn))
 	done
@@ -660,25 +741,41 @@ function inb_perf()
 function get_ref_mops()
 {
 	local ref_mops
-	ref_mops=$(awk -v pat=$1 '$0~pat','/end/' \
-			$FPATH.$3 | grep $2: | tr -s ' ')
-	echo $ref_mops
+	local ref_file="$FPATH.$3"
+
+	ref_mops=$(awk -v pat="$1" '$0~pat','/end/' "$ref_file" \
+		| grep "^$2:" | tr -s ' ' || true)
+	if [[ -z "${ref_mops// /}" ]]; then
+		echo "ERROR: no reference for algorithm '$1' packet size '$2' in $ref_file" >&2
+		exit 1
+	fi
+	echo "$ref_mops"
 }
 
 function populate_pass_mops()
 {
 	local rn=0
 	local cn
+	local mode=$3
+	local ref_suffix=$2
+
+	# For policy mode, use policy-specific reference file
+	if [[ "$mode" == "policy" ]] || [[ "$mode" == "policy_transport" ]]; then
+		ref_suffix="${ref_suffix%.*}.policy.${ref_suffix##*.}"
+	fi
+
+	# Use 97% threshold for all modes
+	local multiplier=".97"
 
 	for i in ${PKT_LIST[@]}
 	do
 		cn=0
-		ref_mops=$(get_ref_mops $1 $i $2)
+		ref_mops=$(get_ref_mops "$1" "$i" "$ref_suffix")
 		for j in ${CORES[@]}
 		do
 			tmp=$(( $cn + 2 ))
 			ref_n=$(echo "$ref_mops" | cut -d " " -f $tmp)
-			PASS_PPS_TABLE[$rn,$cn]=$(echo "($ref_n * .97)" | bc)
+			PASS_PPS_TABLE[$rn,$cn]=$(echo "($ref_n * $multiplier)" | bc)
 			((++cn))
 		done
 		((++rn))
@@ -690,11 +787,13 @@ function aes_cbc_sha1_hmac_outb()
 	local cipher="aes-cbc"
 	local auth="sha1-hmac"
 	local algo_str="${cipher}_${auth}"
+	local mode=$3
+	local cn=${4:-$(core_index "$2")}
 
-	echo "Outbound Perf Test: $algo_str"
-	populate_pass_mops $algo_str "${TYPE[$Y]}.outb"
+	echo "Outbound Perf Test: $algo_str mode:$mode"
+	populate_pass_mops $algo_str "${TYPE[$Y]}.outb" "$mode"
 
-	outb_perf $algo_str $1 $2
+	outb_perf $algo_str $1 $2 "$mode" $cn
 }
 
 function aes_cbc_sha1_hmac_inb()
@@ -702,36 +801,39 @@ function aes_cbc_sha1_hmac_inb()
 	local cipher="aes-cbc"
 	local auth="sha1-hmac"
 	local algo_str="${cipher}_${auth}"
-	local cn
+	local mode=$3
+	local cn=${4:-$(core_index "$2")}
 
-	echo "Inbound Perf Test: $algo_str"
-	populate_pass_mops $algo_str "${TYPE[$Y]}.inb"
+	echo "Inbound Perf Test: $algo_str mode:$mode"
+	populate_pass_mops $algo_str "${TYPE[$Y]}.inb" "$mode"
 
-	inb_perf $algo_str $1 $2
+	inb_perf $algo_str $1 $2 "$mode" $cn
 }
 
 function aes_gcm_outb()
 {
 	local cipher="aes-gcm"
 	local algo_str="${cipher}"
-	local cn
+	local mode=$3
+	local cn=${4:-$(core_index "$2")}
 
-	echo "Outbound Perf Test: $algo_str"
-	populate_pass_mops $algo_str "${TYPE[$Y]}.outb"
+	echo "Outbound Perf Test: $algo_str mode:$mode"
+	populate_pass_mops $algo_str "${TYPE[$Y]}.outb" "$mode"
 
-	outb_perf $algo_str $1 $2
+	outb_perf $algo_str $1 $2 "$mode" $cn
 }
 
 function aes_gcm_inb()
 {
 	local cipher="aes-gcm"
 	local algo_str="${cipher}"
-	local cn
+	local mode=$3
+	local cn=${4:-$(core_index "$2")}
 
-	echo "Inbound Perf Test: $algo_str"
-	populate_pass_mops $algo_str "${TYPE[$Y]}.inb"
+	echo "Inbound Perf Test: $algo_str mode:$mode"
+	populate_pass_mops $algo_str "${TYPE[$Y]}.inb" "$mode"
 
-	inb_perf $algo_str $1 $2
+	inb_perf $algo_str $1 $2 "$mode" $cn
 }
 
 get_system_info
@@ -744,29 +846,40 @@ else
 	FPATH="$OCTEONTESTPATH/inl_ipsec_perf/ref_numbers/cn9k/$FNAME"
 fi
 
+MODES=("itf" "policy")
+
 function check_ref_files()
 {
-	local outb
-	local inb
+	local need_policy=0
+	local type
+	local m
+
+	for m in "${MODES[@]}"; do
+		if [[ "$m" == "policy" || "$m" == "policy_transport" ]]; then
+			need_policy=1
+			break
+		fi
+	done
 
 	for type in "${TYPE[@]}"; do
-		if [[ $IS_CN10K -eq 0 ]] && ! supported_by_9k $type; then
-			continue
-		fi
-		inb="$FPATH.$type.inb"
-		if [[ ! -f $inb ]]; then
-			echo "File $inb not present"
-			exit 1
-		fi
+		[[ $IS_CN10K -eq 0 ]] && ! supported_by_9k $type && continue
 
-		if [[ $type = "ip_p_msns" ]]; then
-			continue
-		fi
+		[[ ! -f "$FPATH.$type.inb" ]] && { echo "File $FPATH.$type.inb not present"; exit 1; }
+		[[ $type != "ip_p_msns" ]] && [[ ! -f "$FPATH.$type.outb" ]] && { echo "File $FPATH.$type.outb not present"; exit 1; }
 
-		outb="$FPATH.$type.outb"
-		if [[ ! -f $outb ]]; then
-			echo "File $outb not present"
-			exit 1
+		if [[ $need_policy -eq 1 ]] && [[ $type != "ip_p_msns" ]]; then
+			if [[ ! -f "$FPATH.$type.policy.inb" ]]; then
+				echo "File $FPATH.$type.policy.inb not present (required for policy mode)"
+				echo "Expected policy refs alongside route refs; listing $(dirname "$FPATH"):"
+				ls -la "$(dirname "$FPATH")" 2>&1 || true
+				exit 1
+			fi
+			if [[ ! -f "$FPATH.$type.policy.outb" ]]; then
+				echo "File $FPATH.$type.policy.outb not present (required for policy mode)"
+				echo "Expected policy refs alongside route refs; listing $(dirname "$FPATH"):"
+				ls -la "$(dirname "$FPATH")" 2>&1 || true
+				exit 1
+			fi
 		fi
 	done
 }
@@ -785,77 +898,84 @@ setup_interfaces
 exec_genboard_cleanup
 
 count=0
-for c in ${CORES[@]}
+
+for mode in "${MODES[@]}"
 do
-	Y=0
-	echo ""
-	echo "Test: ${TN[$Y]} Num_cores: $c"
-	echo "----------------------"
-	sleep $WS
+	cn=0
+	for c in ${CORES[@]}
+	do
+		Y=0
+		echo ""
+		echo "Test: ${TN[$Y]} Num_cores: $c Mode: $mode"
+		echo "----------------------"
+		sleep $WS
 
-	# Outbound
-	# aes-cbc sha1-hmac
+		# Outbound
+		# aes-cbc sha1-hmac
 
-	X=1
-	Y=0
-	run_vpp_ipsec "$c"
+		X=1
+		Y=0
+		run_vpp_ipsec "$c" "$mode"
 
-	pmd_rx_launch
-	pmd_tx_launch $c
-	aes_cbc_sha1_hmac_outb $count $c
-	quit_testpmd "$TPMD_TX_PREFIX"
-	quit_testpmd "$TPMD_RX_PREFIX"
-	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
-	vpp_log inl_ipsec_perf
-	vpp_stats_all inl_ipsec_perf
-	vpp_cleanup inl_ipsec_perf
-	sleep $WS
+		pmd_rx_launch
+		pmd_tx_launch $c
+		aes_cbc_sha1_hmac_outb $count $c "$mode" $cn
+		quit_testpmd "$TPMD_TX_PREFIX"
+		quit_testpmd "$TPMD_RX_PREFIX"
+		awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+		vpp_log inl_ipsec_perf
+		vpp_stats_all inl_ipsec_perf
+		vpp_cleanup inl_ipsec_perf
+		sleep $WS
 
-	echo ""
-	# aes-gcm
+		echo ""
+		# aes-gcm
 
-	X=2
-	Y=1
-	run_vpp_ipsec "$c"
+		X=2
+		Y=1
+		run_vpp_ipsec "$c" "$mode"
 
-	pmd_rx_launch
-	pmd_tx_launch $c
-	aes_gcm_outb $count $c
-	quit_testpmd "$TPMD_TX_PREFIX"
-	quit_testpmd "$TPMD_RX_PREFIX"
-	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
-	vpp_log inl_ipsec_perf
-	vpp_stats_all inl_ipsec_perf
-	vpp_cleanup inl_ipsec_perf
+		pmd_rx_launch
+		pmd_tx_launch $c
+		aes_gcm_outb $count $c "$mode" $cn
+		quit_testpmd "$TPMD_TX_PREFIX"
+		quit_testpmd "$TPMD_RX_PREFIX"
+		awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+		vpp_log inl_ipsec_perf
+		vpp_stats_all inl_ipsec_perf
+		vpp_cleanup inl_ipsec_perf
+		sleep $WS
 
-	#
-	echo ""
-	# Inbound
-	X=1
-	Y=0
-	run_vpp_ipsec_inb $c
-	pmd_rx_launch
-	aes_cbc_sha1_hmac_inb $count $c
-	quit_testpmd "$TPMD_RX_PREFIX"
-	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
-	vpp_log inl_ipsec_perf
-	vpp_stats_all inl_ipsec_perf
-	vpp_cleanup inl_ipsec_perf
+		#
+		echo ""
+		# Inbound
+		X=1
+		Y=0
+		run_vpp_ipsec_inb $c "$mode"
+		pmd_rx_launch
+		aes_cbc_sha1_hmac_inb $count $c "$mode" $cn
+		quit_testpmd "$TPMD_RX_PREFIX"
+		awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+		vpp_log inl_ipsec_perf
+		vpp_stats_all inl_ipsec_perf
+		vpp_cleanup inl_ipsec_perf
 
-	sleep $WS
+		sleep $WS
 
-	echo ""
-	X=2
-	Y=1
-	run_vpp_ipsec_inb $c
-	pmd_rx_launch
-	aes_gcm_inb $count $c
-	quit_testpmd "$TPMD_RX_PREFIX"
-	awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
-	vpp_log inl_ipsec_perf
-	vpp_stats_all inl_ipsec_perf
-	vpp_cleanup inl_ipsec_perf
-	((++count))
+		echo ""
+		X=2
+		Y=1
+		run_vpp_ipsec_inb $c "$mode"
+		pmd_rx_launch
+		aes_gcm_inb $count $c "$mode" $cn
+		quit_testpmd "$TPMD_RX_PREFIX"
+		awk ' { print FILENAME": " $0 } ' testpmd.out.$TPMD_TX_PREFIX
+		vpp_log inl_ipsec_perf
+		vpp_stats_all inl_ipsec_perf
+		vpp_cleanup inl_ipsec_perf
+		((++count))
+		((++cn))
+	done
 done
 
 echo ""
