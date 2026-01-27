@@ -139,15 +139,9 @@ struct oct_outb_sa_data
 typedef struct
 {
   u8 sq_initialized : 1;
-  u8 npa_pool_initialized : 1;
-  u16 hdr_off;
   u32 n_enq;
-  u64 aura_handle;
   u64 io_addr;
   void *lmt_addr;
-  oct_npa_batch_alloc_cl128_t *ba_buffer;
-  u8 ba_first_cl;
-  u8 ba_num_cl;
   CLIB_CACHE_LINE_ALIGN_MARK (data0);
   struct roc_nix_sq sq;
   i32 cached_pkts;
@@ -178,6 +172,16 @@ typedef struct
 
 typedef struct
 {
+  u8 npa_pool_initialized : 1;
+  u16 hdr_off;
+  u64 aura_handle;
+  oct_npa_batch_alloc_cl128_t *ba_buffer;
+  u8 ba_first_cl;
+  u8 ba_num_cl;
+} oct_per_thread_data_t;
+
+typedef struct
+{
   u8 inl_dev_initialized : 1;
   u8 use_single_rx_aura : 1;
   u8 enable_optee : 1;
@@ -185,6 +189,7 @@ typedef struct
   u32 npa_max_pools;
   u64 rx_aura_handle;
   oct_device_t **oct_dev;
+  oct_per_thread_data_t *per_thread_data;
 } oct_main_t;
 
 extern oct_main_t oct_main;

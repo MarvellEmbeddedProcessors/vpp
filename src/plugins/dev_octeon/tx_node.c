@@ -51,14 +51,12 @@ typedef struct
 #ifdef PLATFORM_OCTEON9
 static_always_inline u32
 oct_batch_free (vlib_main_t *vm, oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq,
-		const u64 flags)
+		oct_per_thread_data_t *ptd, const u64 flags)
 {
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
-  u16 off = ctq->hdr_off;
-  u64 ah = ctq->aura_handle;
+  u16 off = ptd->hdr_off;
+  u64 ah = ptd->aura_handle;
   u32 n_freed = 0, n;
-
-  ah = ctq->aura_handle;
 
   if ((n = roc_npa_aura_op_available (ah)) >= 32)
     {
@@ -91,7 +89,7 @@ oct_lmt_copy (void *lmt_addr, u64 io_addr, void *desc, u64 dwords)
 #else
 static_always_inline u32
 oct_batch_free (vlib_main_t *vm, oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq,
-		const u64 flags)
+		oct_per_thread_data_t *ptd, const u64 flags)
 {
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
   oct_npa_batch_alloc_cl128_t *cl;
@@ -104,13 +102,13 @@ oct_batch_free (vlib_main_t *vm, oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq,
   else
     n_alloc = ROC_CN10K_NPA_BATCH_ALLOC_MAX_PTRS;
 
-  num_cl = ctq->ba_num_cl;
+  num_cl = ptd->ba_num_cl;
   if (num_cl)
     {
-      u16 off = ctq->hdr_off;
-      u32 *bi = (u32 *) ctq->ba_buffer;
+      u16 off = ptd->hdr_off;
+      u32 *bi = (u32 *) ptd->ba_buffer;
 
-      for (cl = ctq->ba_buffer + ctq->ba_first_cl; num_cl > 0; num_cl--, cl++)
+      for (cl = ptd->ba_buffer + ptd->ba_first_cl; num_cl > 0; num_cl--, cl++)
 	{
 	  oct_npa_batch_alloc_status_t st;
 
@@ -119,13 +117,13 @@ oct_batch_free (vlib_main_t *vm, oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq,
 	    {
 	    cl_not_ready:
 	      ctx->batch_alloc_not_ready++;
-	      n_freed = bi - (u32 *) ctq->ba_buffer;
+	      n_freed = bi - (u32 *) ptd->ba_buffer;
 	      if (n_freed > 0)
 		{
-		  vlib_buffer_free_no_next (vm, (u32 *) ctq->ba_buffer,
+		  vlib_buffer_free_no_next (vm, (u32 *) ptd->ba_buffer,
 					    n_freed);
-		  ctq->ba_num_cl = num_cl;
-		  ctq->ba_first_cl = cl - ctq->ba_buffer;
+		  ptd->ba_num_cl = num_cl;
+		  ptd->ba_first_cl = cl - ptd->ba_buffer;
 		  return n_freed;
 		}
 
@@ -155,20 +153,20 @@ oct_batch_free (vlib_main_t *vm, oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq,
 	    }
 	}
 
-      n_freed = bi - (u32 *) ctq->ba_buffer;
+      n_freed = bi - (u32 *) ptd->ba_buffer;
       if (n_freed > 0)
-	vlib_buffer_free_no_next (vm, (u32 *) ctq->ba_buffer, n_freed);
+	vlib_buffer_free_no_next (vm, (u32 *) ptd->ba_buffer, n_freed);
 
       /* clear status bits in each cacheline */
-      n = cl - ctq->ba_buffer;
+      n = cl - ptd->ba_buffer;
       for (u32 i = 0; i < n; i++)
-	ctq->ba_buffer[i].iova[0] = ctq->ba_buffer[i].iova[8] =
+	ptd->ba_buffer[i].iova[0] = ptd->ba_buffer[i].iova[8] =
 	  OCT_BATCH_ALLOC_IOVA0_MASK;
 
-      ctq->ba_num_cl = ctq->ba_first_cl = 0;
+      ptd->ba_num_cl = ptd->ba_first_cl = 0;
     }
 
-  ah = ctq->aura_handle;
+  ah = ptd->aura_handle;
 
   if ((n = roc_npa_aura_op_available (ah)) >= 32)
     {
@@ -183,12 +181,12 @@ oct_batch_free (vlib_main_t *vm, oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq,
       };
 
       addr = roc_npa_aura_handle_to_base (ah) + NPA_LF_AURA_BATCH_ALLOC;
-      res = roc_atomic64_casl (cmp.as_u64, (uint64_t) ctq->ba_buffer,
+      res = roc_atomic64_casl (cmp.as_u64, (uint64_t) ptd->ba_buffer,
 			       (i64 *) addr);
       if (res == ALLOC_RESULT_ACCEPTED || res == ALLOC_RESULT_NOCORE)
 	{
-	  ctq->ba_num_cl = (n + 15) / 16;
-	  ctq->ba_first_cl = 0;
+	  ptd->ba_num_cl = (n + 15) / 16;
+	  ptd->ba_first_cl = 0;
 	}
       else
 	ctx->batch_alloc_issue_fail++;
@@ -863,7 +861,8 @@ oct_submit_quad_packets (u64 lmt_arg, oct_device_t *cd,
 }
 
 i32 static_always_inline
-oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node, oct_tx_ctx_t *ctx,
+oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node,
+	       oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
 	       vnet_dev_tx_queue_t *txq, u16 tx_pkts, vlib_buffer_t **bufs)
 {
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
@@ -894,24 +893,13 @@ oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node, oct_tx_ctx_t *ctx,
   b = bufs;
   io_addr = sq->io_addr;
   sq_handle = sq->qid;
-  aura_handle = ctq->aura_handle;
+  aura_handle = ptd->aura_handle;
 
-  if (PREDICT_FALSE (ctq->cached_pkts < tx_pkts))
+  if (PREDICT_FALSE (!oct_check_fc_nix (sq, &ctq->cached_pkts, tx_pkts)))
     {
-      ctq->cached_pkts = (sq->nb_sqb_bufs_adj - *((u64 *) sq->fc))
-			 << sq->sqes_per_sqb_log2;
-
-      if (PREDICT_FALSE (ctq->cached_pkts < tx_pkts))
-	{
-	  if (ctq->cached_pkts < 0)
-	    {
-	      n_drop = tx_pkts;
-	      tx_pkts = 0;
-	      goto free_pkts;
-	    }
-	  n_drop = tx_pkts - ctq->cached_pkts;
-	  tx_pkts = ctq->cached_pkts;
-	}
+      n_drop = tx_pkts;
+      tx_pkts = 0;
+      goto free_pkts;
     }
 
   send_hdr0 = (struct nix_send_hdr_s *) &desc0[0];
@@ -1268,8 +1256,6 @@ oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node, oct_tx_ctx_t *ctx,
       b += 1;
     }
 
-  ctq->cached_pkts -= tx_pkts;
-
 free_pkts:
   if (PREDICT_FALSE (n_drop))
     {
@@ -1282,14 +1268,15 @@ free_pkts:
 
 i32 static_always_inline
 oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
-		     oct_tx_ctx_t *ctx, vnet_dev_tx_queue_t *txq, u16 tx_pkts,
+		     oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
+		     vnet_dev_tx_queue_t *txq, u16 tx_pkts,
 		     vlib_buffer_t **bufs)
 {
   oct_ipsec_main_t *im = &oct_ipsec_main;
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
   vnet_dev_port_interfaces_t *ifs = txq->port->interfaces;
   u16 num_tx_queues = ifs->num_tx_queues;
-  u64 aura_handle = ctq->aura_handle;
+  u64 aura_handle = ptd->aura_handle;
   vnet_dev_t *dev = txq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
   u32 current_sq0, current_sq1, current_sq2, current_sq3;
@@ -1703,16 +1690,19 @@ VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
   vlib_buffer_t *ipsec_buff[VLIB_FRAME_SIZE + 8];
   vlib_buffer_t *buff[VLIB_FRAME_SIZE + 8];
   int ipsec_cnt = 0, pkt_cnt = 0;
+  u32 thread_index = vm->thread_index;
 #ifdef PLATFORM_OCTEON9
   u64 lmt_id = 0;
 #else
-  u64 lmt_id = vm->thread_index << ROC_LMT_LINES_PER_CORE_LOG2;
+  u64 lmt_id = thread_index << ROC_LMT_LINES_PER_CORE_LOG2;
 #endif
+  oct_per_thread_data_t *ptd =
+    vec_elt_at_index (oct_main.per_thread_data, thread_index);
 
   oct_tx_ctx_t ctx = {
     .node = node,
     .hdr_w0_teplate = {
-      .aura = roc_npa_aura_handle_to_aura (cd->ctqs[0]->aura_handle),
+      .aura = roc_npa_aura_handle_to_aura (ptd->aura_handle),
       .sq = ctq->sq.qid,
       .sizem1 = 1,
     },
@@ -1722,7 +1712,7 @@ VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
     .lmt_lines = ctq->lmt_addr + (lmt_id << ROC_LMT_LINE_SIZE_LOG2),
   };
 
-  oct_batch_free (vm, &ctx, txq, OCT_TX_IPSEC_TM_NODE);
+  oct_batch_free (vm, &ctx, txq, ptd, OCT_TX_IPSEC_TM_NODE);
 
   vlib_get_buffers (vm, vlib_frame_vector_args (frame), b, n_pkts);
   n_left = n_pkts;
@@ -1739,10 +1729,10 @@ VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
 
   if (ipsec_cnt)
     ipsec_cnt =
-      oct_pkts_send_ipsec (vm, node, &ctx, txq, ipsec_cnt, ipsec_buff);
+      oct_pkts_send_ipsec (vm, node, ptd, &ctx, txq, ipsec_cnt, ipsec_buff);
 
   if (pkt_cnt)
-    pkt_cnt = oct_pkts_send (vm, node, &ctx, txq, pkt_cnt, buff);
+    pkt_cnt = oct_pkts_send (vm, node, ptd, &ctx, txq, pkt_cnt, buff);
 
   if (PREDICT_FALSE (n_left != (ipsec_cnt + pkt_cnt)))
     {
@@ -1765,16 +1755,19 @@ VNET_DEV_NODE_FN (oct_tx_node)
   u32 *from = vlib_frame_vector_args (frame);
   u32 n, n_enq, n_left, n_pkts = frame->n_vectors;
   vlib_buffer_t *buffers[VLIB_FRAME_SIZE + 8], **b = buffers;
+  u32 thread_index = vm->thread_index;
 #ifdef PLATFORM_OCTEON9
   u64 lmt_id = 0;
 #else
-  u64 lmt_id = vm->thread_index << ROC_LMT_LINES_PER_CORE_LOG2;
+  u64 lmt_id = thread_index << ROC_LMT_LINES_PER_CORE_LOG2;
 #endif
+  oct_per_thread_data_t *ptd =
+    vec_elt_at_index (oct_main.per_thread_data, thread_index);
 
   oct_tx_ctx_t ctx = {
     .node = node,
     .hdr_w0_teplate = {
-      .aura = roc_npa_aura_handle_to_aura (ctq->aura_handle),
+      .aura = roc_npa_aura_handle_to_aura (ptd->aura_handle),
       .sq = ctq->sq.qid,
       .sizem1 = 1,
     },
@@ -1791,7 +1784,7 @@ VNET_DEV_NODE_FN (oct_tx_node)
   vnet_dev_tx_queue_lock_if_needed (txq);
 
   n_enq = ctq->n_enq;
-  n_enq -= oct_batch_free (vm, &ctx, txq, OCT_TX_NODE);
+  n_enq -= oct_batch_free (vm, &ctx, txq, ptd, OCT_TX_NODE);
 
   if (PREDICT_FALSE (node->flags & VLIB_NODE_FLAG_TRACE))
     {

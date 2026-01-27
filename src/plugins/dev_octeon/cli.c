@@ -290,6 +290,7 @@ static clib_error_t *
 oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			       vlib_cli_command_t *cmd)
 {
+  vlib_thread_main_t *tm = vlib_get_thread_main ();
   vnet_dev_main_t *dm = &vnet_dev_main;
   oct_rxq_t *crq;
   int i;
@@ -310,10 +311,11 @@ oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	{
 	  vnet_dev_port_interfaces_t *ifs = dev->ports[0]->interfaces;
 
-	  vlib_cli_output (vm, "Interface: %U", format_vnet_dev_log, dev, 0);
-	  vlib_cli_output (vm, "%-.25s", ul);
 	  if (!oct_main.use_single_rx_aura)
 	    {
+	      vlib_cli_output (vm, "Interface: %U", format_vnet_dev_log, dev,
+			       0);
+	      vlib_cli_output (vm, "%-.25s", ul);
 	      for (i = 0; i < ifs->num_rx_queues; i++)
 		{
 		  crq =
@@ -323,13 +325,6 @@ oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		    crq->aura_handle,
 		    roc_npa_aura_op_available (crq->aura_handle));
 		}
-	    }
-	  for (i = 0; i < ifs->num_tx_queues; i++)
-	    {
-	      vlib_cli_output (
-		vm, "tx queue %d aura %x avl_count %d\n", i,
-		od->ctqs[i]->aura_handle,
-		roc_npa_aura_op_available (od->ctqs[i]->aura_handle));
 	    }
 	  if (oct_main.inl_dev_initialized && roc_model_is_cn10k ())
 	    {
@@ -342,6 +337,16 @@ oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  vlib_cli_output (vm, "\n");
 	}
     }
+
+  for (i = 0; i < tm->n_vlib_mains; i++)
+    {
+      oct_per_thread_data_t *ptd =
+	vec_elt_at_index (oct_main.per_thread_data, i);
+      vlib_cli_output (vm, "Thread %d aura %x avl_count %d\n", i,
+		       ptd->aura_handle,
+		       roc_npa_aura_op_available (ptd->aura_handle));
+    }
+
   return 0;
 }
 
