@@ -36,6 +36,7 @@ define tm_sys_node_add_reply
  * @param shaper_id - Identifier of the shaper profile to be applied.
  * @param lvl - Level of the new node in the hierarchy.
  * @param priority - Priority level of the new node.
+ * @param flow_name - Name of the flow associated with the new node.
  */
 define tm_sys_node_add
 {
@@ -48,6 +49,7 @@ define tm_sys_node_add
   i32 shaper_id;
   u32 lvl;
   u32 priority;
+  string flow_name[64];
 };
 
 /**

@@ -11,6 +11,7 @@
 #include <vlibmemory/api.h>
 #include <vnet/tm/tm.api_enum.h>
 #include <vnet/tm/tm.api_types.h>
+#include <vppinfra/hash.h>
 
 /**
  * Base message ID fot the plugin
@@ -32,6 +33,7 @@ vl_api_tm_sys_node_add_t_handler (vl_api_tm_sys_node_add_t *mp)
   u32 priority = 0;
   u32 weight = 0;
   u32 lvl = 0;
+  const char *flow_name = (const char *) mp->flow_name;
   vnet_sw_interface_t *sw =
     vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
 
@@ -43,7 +45,7 @@ vl_api_tm_sys_node_add_t_handler (vl_api_tm_sys_node_add_t *mp)
   lvl = clib_net_to_host_u32 (mp->lvl);
 
   rv = tm_sys_node_add (sw->hw_if_index, node_id, parent_node_id, priority,
-			weight, lvl, &n_p);
+			weight, lvl, &n_p, flow_name);
 
   REPLY_MACRO2 (VL_API_TM_SYS_NODE_ADD_REPLY,
 		({ rmp->node_id = clib_host_to_net_u32 (node_id); }));

@@ -13,6 +13,14 @@
 #include <vppinfra/hash.h>
 #include <vnet/dev/types.h>
 
+// Global mapping of flow_name to flow_id
+extern uword *flow_name_to_id_hash;
+extern u32 next_flow_id;
+
+// Function prototypes for managing flow_name to flow_id mapping
+u32 tm_create_flow_id (const char *flow_name);
+u32 tm_get_flow_id (const char *flow_name);
+
 typedef struct tm_node_params_
 {
   /* Shaper profile for the node. */
@@ -523,9 +531,8 @@ typedef struct tm_system_t_
 {
   u32 hw_if_idx;
   int (*node_add) (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
-		   u32 priority, u32 weight, u32 lvl,
-		   tm_node_params_t *params);
-
+		   u32 priority, u32 weight, u32 lvl, tm_node_params_t *params,
+		   const char *flow_name);
   int (*node_suspend) (u32 hw_if_idx, u32 node_idx);
   int (*node_resume) (u32 hw_if_idx, u32 node_idx);
   int (*node_delete) (u32 hw_if_idx, u32 node_idx);
@@ -555,12 +562,14 @@ typedef struct tm_system_t_
  * @param lvl - Level of the new node in the hierarchy.
  * @param params - Pointer to the structure containing additional parameters
  * for the TM node.
+ * @param flow_name - Name of the flow associated with the node (optional,
+ * can be NULL or empty).
  *
  * @return 0 on success.
  */
 int tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
 		     u32 priority, u32 weight, u32 lvl,
-		     tm_node_params_t *params);
+		     tm_node_params_t *params, const char *flow_name);
 
 /**
  * @brief Suspend an existing traffic management node.

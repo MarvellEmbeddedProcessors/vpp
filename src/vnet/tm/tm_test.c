@@ -44,6 +44,7 @@ api_tm_sys_node_add (vat_main_t *vam)
   u32 msg_size = sizeof (*mp);
   u8 sw_if_idx_set = 0;
   u32 sw_if_idx = 0;
+  u8 *flow_name = 0;
   int ret;
 
   vam->result_ready = 0;
@@ -65,6 +66,8 @@ api_tm_sys_node_add (vat_main_t *vam)
 	priority_set = 1;
       else if (unformat (i, "level %u", &level))
 	level_set = 1;
+      else if (unformat (i, "flow_name %s", &flow_name))
+	;
       else
 	{
 	  clib_warning ("Invalid input, unknown parameter");
@@ -84,6 +87,9 @@ api_tm_sys_node_add (vat_main_t *vam)
   mp->weight = clib_host_to_net_u32 (weight);
   mp->priority = clib_host_to_net_u32 (priority);
   mp->lvl = clib_host_to_net_u32 (level);
+  if (flow_name)
+    strncpy ((char *) mp->flow_name, (char *) flow_name,
+	     sizeof (mp->flow_name) - 1);
 
   S (mp);
   W (ret);

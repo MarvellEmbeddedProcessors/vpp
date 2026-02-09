@@ -5,6 +5,52 @@
  */
 
 #include <vnet/ethernet/ethernet.h>
+#include <vppinfra/hash.h>
+
+/* Global mapping of flow_name to flow_id */
+uword *flow_name_to_id_hash;
+u32 next_flow_id = 1;
+
+u32
+tm_create_flow_id (const char *flow_name)
+{
+  uword *p;
+
+  if (!flow_name || !flow_name[0])
+    return 0;
+
+  p = hash_get_mem (flow_name_to_id_hash, flow_name);
+  if (p)
+    {
+      return p[0];
+    }
+  else
+    {
+      u32 flow_id = next_flow_id++;
+      hash_set_mem (flow_name_to_id_hash, format (0, "%s", flow_name),
+		    flow_id);
+      return flow_id;
+    }
+}
+
+u32
+tm_get_flow_id (const char *flow_name)
+{
+  uword *p;
+
+  if (!flow_name || !flow_name[0])
+    return 0;
+
+  p = hash_get_mem (flow_name_to_id_hash, flow_name);
+  if (p)
+    {
+      return p[0];
+    }
+  else
+    {
+      return 0;
+    }
+}
 
 tm_system_t tm_system_main;
 
@@ -20,20 +66,32 @@ tm_system_register (tm_system_t *tm_sys, u32 hw_if_idx)
 
   dev_class->tm_sys_impl = tm_sys;
 
+  if (!flow_name_to_id_hash)
+    flow_name_to_id_hash = hash_create_string (0, sizeof (uword));
+
   return 0;
 }
 
 int
 tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id, u32 priority,
-		 u32 weight, u32 lvl, tm_node_params_t *params)
+		 u32 weight, u32 lvl, tm_node_params_t *params,
+		 const char *flow_name)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
   vnet_device_class_t *dev_class =
     vnet_get_device_class (vnm, hi->dev_class_index);
 
+  if (flow_name && flow_name[0])
+    {
+      if (tm_get_flow_id (flow_name))
+	return VNET_API_ERROR_VALUE_EXIST;
+
+      tm_create_flow_id (flow_name);
+    }
+
   dev_class->tm_sys_impl->node_add (hw_if_idx, node_id, parent_node_id,
-				    priority, weight, lvl, params);
+				    priority, weight, lvl, params, flow_name);
 
   return 0;
 }
