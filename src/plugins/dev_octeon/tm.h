@@ -15,4 +15,11 @@
 #define OCT_TM_NODE_ID_NULL -1
 #define OCT_TM_INVALID	    0
 
+/* Internal mapping of flow_id to tm_node_id */
+extern uword *oct_tm_flow_id_to_node_id_hash;
+
+void oct_tm_add_flow_id_to_node_id_mapping (u32 flow_id, u32 tm_node_id);
+
+u32 oct_tm_get_node_id_from_flow_id (u32 flow_id);
+
 #endif /* _OCT_TM_H_ */

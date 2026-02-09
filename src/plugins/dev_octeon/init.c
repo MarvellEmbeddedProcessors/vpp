@@ -64,6 +64,18 @@ vnet_dev_node_t oct_tx_node = {
   .n_error_counters = ARRAY_LEN (oct_tx_node_counters),
 };
 
+vnet_dev_node_t oct_tx_tm_node = {
+  .format_trace = format_oct_tx_trace,
+  .error_counters = oct_tx_node_counters,
+  .n_error_counters = ARRAY_LEN (oct_tx_node_counters),
+};
+
+vnet_dev_node_t oct_tx_ipsec_node = {
+  .format_trace = format_oct_tx_trace,
+  .error_counters = oct_tx_node_counters,
+  .n_error_counters = ARRAY_LEN (oct_tx_node_counters),
+};
+
 vnet_dev_node_t oct_tx_ipsec_tm_node = {
   .format_trace = format_oct_tx_trace,
   .error_counters = oct_tx_node_counters,
@@ -203,6 +215,13 @@ static vnet_dev_arg_t oct_dev_args[] = {
     .name = "cpt_cq_enable",
     .desc = "Enable CPT CQ for inline IPsec errors. Applicable to inline "
 	    "devices only",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = false,
+  },
+  {
+    .id = OCT_DEV_ARG_EGRESS_TM,
+    .name = "egress_tm",
+    .desc = "Egress traffic manager, applicable to network devices only",
     .type = VNET_DEV_ARG_TYPE_BOOL,
     .default_val.boolean = false,
   },
@@ -465,7 +484,20 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
 	}
       if ((rv = oct_init_nix_inline_ipsec (vm, oidm->vdev, dev)))
 	return rv;
-      port_add_args.tx_node = &oct_tx_ipsec_tm_node;
+      port_add_args.tx_node = &oct_tx_ipsec_node;
+    }
+
+  foreach_vnet_dev_args (arg, dev)
+    {
+      if (arg->id == OCT_DEV_ARG_EGRESS_TM && vnet_dev_arg_get_bool (arg))
+	{
+	  cd->egress_tm = 1;
+	  if (port_add_args.tx_node == &oct_tx_ipsec_node)
+	    port_add_args.tx_node = &oct_tx_ipsec_tm_node;
+	  else
+	    port_add_args.tx_node = &oct_tx_tm_node;
+	  break;
+	}
     }
 
   if (roc_model_is_cn20k ())

@@ -5,6 +5,7 @@
 #include <vlib/vlib.h>
 #include <vppinfra/ring.h>
 #include <vppinfra/vector/ip_csum.h>
+#include <vppinfra/vector/count_equal.h>
 
 #include <vnet/dev/dev.h>
 #include <vnet/ethernet/ethernet.h>
@@ -15,9 +16,11 @@
 
 #include <dev_octeon/octeon.h>
 #include <dev_octeon/ipsec.h>
+#include <dev_octeon/tm.h>
 
-#define OCT_TX_NODE	     (1 << 0)
-#define OCT_TX_IPSEC_TM_NODE (1 << 1)
+#define OCT_TX_NODE  (1 << 0)
+#define OCT_TX_IPSEC (1 << 1)
+#define OCT_TX_TM    (1 << 2)
 
 #define OCT_LMT_GET_LINE_ADDR(lmt_addr, lmt_num)                              \
   (void *) ((u64) (lmt_addr) + ((u64) (lmt_num) << ROC_LMT_LINE_SIZE_LOG2))
@@ -870,16 +873,18 @@ oct_submit_quad_packets (u64 lmt_arg, oct_device_t *cd,
 
   roc_lmt_submit_steorl (lmt_arg, cd->cpt_io_addr);
 
+  /*
+   * Add a memory barrier so that LMTLINEs from the previous iteration
+   * can be reused for a subsequent transfer.
+   */
   asm volatile ("dmb oshst" ::: "memory");
 }
 
 i32 static_always_inline
-oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node,
-	       oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
-	       vnet_dev_tx_queue_t *txq, u16 tx_pkts, vlib_buffer_t **bufs)
+oct_pkts_send_batch (vlib_main_t *vm, oct_txq_t *ctq0, u64 aura_handle,
+		     u16 tx_pkts, vlib_buffer_t **bufs)
 {
-  oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
-  u32 desc_sz = 10 /* Worst case - Send hdr + Two SG with 3 segs each */;
+  u32 desc_sz = 10;
   union nix_send_sg_s *sg8, *sg9, *sg10, *sg11, *sg12, *sg13, *sg14, *sg15;
   struct nix_send_hdr_s *send_hdr12, *send_hdr13, *send_hdr14, *send_hdr15;
   struct nix_send_hdr_s *send_hdr8, *send_hdr9, *send_hdr10, *send_hdr11;
@@ -895,20 +900,19 @@ oct_pkts_send (vlib_main_t *vm, vlib_node_runtime_t *node,
   void *lmt_line8, *lmt_line9, *lmt_line10, *lmt_line11;
   void *lmt_line0, *lmt_line1, *lmt_line2, *lmt_line3;
   void *lmt_line4, *lmt_line5, *lmt_line6, *lmt_line7;
-  u64 n_segs[16], aura_handle;
+  u64 n_segs[16];
   u64 lmt_arg, core_lmt_base_addr, core_lmt_id;
   u16 n_drop = 0;
   u32 from[VLIB_FRAME_SIZE];
   struct roc_nix_sq *sq;
   vlib_buffer_t **b;
 
-  sq = &ctq->sq;
+  sq = &ctq0->sq;
   b = bufs;
   io_addr = sq->io_addr;
   sq_handle = sq->qid;
-  aura_handle = ptd->aura_handle;
 
-  if (PREDICT_FALSE (!oct_check_fc_nix (sq, &ctq->cached_pkts, tx_pkts)))
+  if (PREDICT_FALSE (!oct_check_fc_nix (sq, &ctq0->cached_pkts, tx_pkts)))
     {
       n_drop = tx_pkts;
       tx_pkts = 0;
@@ -1279,11 +1283,210 @@ free_pkts:
   return tx_pkts;
 }
 
+static_always_inline void
+oct_pkt_send_one (vlib_main_t *vm, vlib_buffer_t *b, oct_txq_t *ctq, u64 *desc,
+		  u64 aura_handle, u32 *failed_buff, u16 *n_nix_fc_drop)
+{
+  struct nix_send_hdr_s *send_hdr = (struct nix_send_hdr_s *) &desc[0];
+  union nix_send_sg_s *sg = (union nix_send_sg_s *) &desc[2];
+  struct roc_nix_sq *sq = &ctq->sq;
+  u64 io_addr, core_lmt_base_addr, core_lmt_id, lmt_arg, n_segs, n_dwords;
+  void *lmt_line;
+
+  if (!oct_check_fc_nix (sq, &ctq->cached_pkts, 1))
+    {
+      failed_buff[*n_nix_fc_drop] = vlib_get_buffer_index (vm, b);
+      (*n_nix_fc_drop)++;
+      return;
+    }
+
+  io_addr = sq->io_addr;
+  core_lmt_base_addr = (u64) sq->lmt_addr;
+  ROC_LMT_BASE_ID_GET (core_lmt_base_addr, core_lmt_id);
+  lmt_line = (void *) ((u64) core_lmt_base_addr);
+  lmt_arg = core_lmt_id;
+
+  n_segs = oct_get_tx_vlib_buf_segs (vm, b);
+  n_dwords = oct_add_sg_list (sg, b, n_segs);
+  n_dwords += oct_add_send_hdr (send_hdr, b, aura_handle, sq->qid, n_dwords);
+
+  /* Clear io_addr[6:0] bits */
+  io_addr &= ~0x7FULL;
+  /* Set size-1 of first LMTST at io_addr[6:4] */
+  io_addr |= (n_dwords - 1) << 4;
+
+  asm volatile ("dmb oshst" ::: "memory");
+  roc_lmt_mov_seg (lmt_line, desc, n_dwords);
+  roc_lmt_submit_steorl (lmt_arg, io_addr);
+}
+
 i32 static_always_inline
-oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
-		     oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
-		     vnet_dev_tx_queue_t *txq, u16 tx_pkts,
-		     vlib_buffer_t **bufs)
+oct_pkts_send_mixed (vlib_main_t *vm, u64 aura_handle, u16 tx_pkts,
+		     vlib_buffer_t **bufs, u32 *pkt_sqs, oct_device_t *cd)
+{
+  u32 desc_sz = 10;
+  u64 desc0[desc_sz], desc1[desc_sz], desc2[desc_sz], desc3[desc_sz];
+  struct nix_send_hdr_s *send_hdr0, *send_hdr1, *send_hdr2, *send_hdr3;
+  union nix_send_sg_s *sg0, *sg1, *sg2, *sg3;
+  void *lmt_line0, *lmt_line1, *lmt_line2, *lmt_line3;
+  u64 io_addr, sq_handle_xor;
+  u64 lmt_arg, core_lmt_base_addr, core_lmt_id;
+  u64 n_dwords[4], n_segs[4];
+  u16 n_left0;
+  u32 failed_buff[VLIB_FRAME_SIZE];
+  u16 n_nix_fc_drop = 0;
+  struct roc_nix_sq *sq0, *sq1, *sq2, *sq3;
+  oct_txq_t *ctq0, *ctq1, *ctq2, *ctq3;
+  vlib_buffer_t **b;
+  u32 pkt_idx = 0;
+
+  b = bufs;
+
+  send_hdr0 = (struct nix_send_hdr_s *) &desc0[0];
+  send_hdr1 = (struct nix_send_hdr_s *) &desc1[0];
+  send_hdr2 = (struct nix_send_hdr_s *) &desc2[0];
+  send_hdr3 = (struct nix_send_hdr_s *) &desc3[0];
+
+  sg0 = (union nix_send_sg_s *) &desc0[2];
+  sg1 = (union nix_send_sg_s *) &desc1[2];
+  sg2 = (union nix_send_sg_s *) &desc2[2];
+  sg3 = (union nix_send_sg_s *) &desc3[2];
+
+  ctq0 = cd->ctqs[pkt_sqs[0]];
+  io_addr = ctq0->sq.io_addr;
+  core_lmt_base_addr = (u64) ctq0->sq.lmt_addr;
+  ROC_LMT_BASE_ID_GET (core_lmt_base_addr, core_lmt_id);
+
+  while (pkt_idx + 4 <= tx_pkts)
+    {
+      ctq0 = cd->ctqs[pkt_sqs[pkt_idx + 0]];
+      ctq1 = cd->ctqs[pkt_sqs[pkt_idx + 1]];
+      ctq2 = cd->ctqs[pkt_sqs[pkt_idx + 2]];
+      ctq3 = cd->ctqs[pkt_sqs[pkt_idx + 3]];
+
+      sq0 = &ctq0->sq;
+      sq1 = &ctq1->sq;
+      sq2 = &ctq2->sq;
+      sq3 = &ctq3->sq;
+
+      sq_handle_xor = sq0->qid ^ sq1->qid;
+      sq_handle_xor += sq1->qid ^ sq2->qid;
+      sq_handle_xor += sq2->qid ^ sq3->qid;
+
+      if (!sq_handle_xor)
+	{
+	  n_left0 = oct_check_fc_nix (sq0, &ctq0->cached_pkts, 4);
+	  if (!n_left0)
+	    {
+	      failed_buff[n_nix_fc_drop++] = vlib_get_buffer_index (vm, b[0]);
+	      failed_buff[n_nix_fc_drop++] = vlib_get_buffer_index (vm, b[1]);
+	      failed_buff[n_nix_fc_drop++] = vlib_get_buffer_index (vm, b[2]);
+	      failed_buff[n_nix_fc_drop++] = vlib_get_buffer_index (vm, b[3]);
+	    }
+	  else
+	    {
+	      io_addr = sq0->io_addr;
+	      core_lmt_base_addr = (u64) sq0->lmt_addr;
+	      ROC_LMT_BASE_ID_GET (core_lmt_base_addr, core_lmt_id);
+
+	      lmt_line0 = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 0);
+	      lmt_line1 = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 1);
+	      lmt_line2 = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 2);
+	      lmt_line3 = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 3);
+
+	      n_segs[0] = oct_get_tx_vlib_buf_segs (vm, b[0]);
+	      n_segs[1] = oct_get_tx_vlib_buf_segs (vm, b[1]);
+	      n_segs[2] = oct_get_tx_vlib_buf_segs (vm, b[2]);
+	      n_segs[3] = oct_get_tx_vlib_buf_segs (vm, b[3]);
+
+	      n_dwords[0] = oct_add_sg_list (sg0, b[0], n_segs[0]);
+	      n_dwords[1] = oct_add_sg_list (sg1, b[1], n_segs[1]);
+	      n_dwords[2] = oct_add_sg_list (sg2, b[2], n_segs[2]);
+	      n_dwords[3] = oct_add_sg_list (sg3, b[3], n_segs[3]);
+
+	      n_dwords[0] += oct_add_send_hdr (send_hdr0, b[0], aura_handle,
+					       sq0->qid, n_dwords[0]);
+	      n_dwords[1] += oct_add_send_hdr (send_hdr1, b[1], aura_handle,
+					       sq0->qid, n_dwords[1]);
+	      n_dwords[2] += oct_add_send_hdr (send_hdr2, b[2], aura_handle,
+					       sq0->qid, n_dwords[2]);
+	      n_dwords[3] += oct_add_send_hdr (send_hdr3, b[3], aura_handle,
+					       sq0->qid, n_dwords[3]);
+
+	      /*
+	       * Add a memory barrier so that LMTLINEs from the previous
+	       * iteration can be reused for a subsequent transfer.
+	       */
+	      asm volatile ("dmb oshst" ::: "memory");
+
+	      /* Clear io_addr[6:0] bits */
+	      io_addr &= ~0x7FULL;
+	      lmt_arg = core_lmt_id;
+	      /* Set size-1 of first LMTST at io_addr[6:4] */
+	      io_addr |= (n_dwords[0] - 1) << 4;
+
+	      roc_lmt_mov_seg (lmt_line0, desc0, n_dwords[0]);
+	      roc_lmt_mov_seg (lmt_line1, desc1, n_dwords[1]);
+	      roc_lmt_mov_seg (lmt_line2, desc2, n_dwords[2]);
+	      roc_lmt_mov_seg (lmt_line3, desc3, n_dwords[3]);
+
+	      /* Set number of LMTSTs, excluding the first */
+	      lmt_arg |= (4 - 1) << 12;
+
+	      /*
+	       * Set vector of sizes of next 3 LMTSTs.
+	       * Every 3 bits represent size-1 of one LMTST
+	       */
+	      lmt_arg |= (n_dwords[1] - 1) << (19 + (3 * 0));
+	      lmt_arg |= (n_dwords[2] - 1) << (19 + (3 * 1));
+	      lmt_arg |= (n_dwords[3] - 1) << (19 + (3 * 2));
+
+	      roc_lmt_submit_steorl (lmt_arg, io_addr);
+	    }
+	}
+      else
+	{
+	  oct_pkt_send_one (vm, b[0], ctq0, desc0, aura_handle, failed_buff,
+			    &n_nix_fc_drop);
+	  oct_pkt_send_one (vm, b[1], ctq1, desc1, aura_handle, failed_buff,
+			    &n_nix_fc_drop);
+	  oct_pkt_send_one (vm, b[2], ctq2, desc2, aura_handle, failed_buff,
+			    &n_nix_fc_drop);
+	  oct_pkt_send_one (vm, b[3], ctq3, desc3, aura_handle, failed_buff,
+			    &n_nix_fc_drop);
+	}
+      pkt_idx += 4;
+      b += 4;
+    }
+
+  while (pkt_idx < tx_pkts)
+    {
+      if (pkt_idx + 2 < tx_pkts)
+	vlib_prefetch_buffer_header (b[2], LOAD);
+
+      oct_pkt_send_one (vm, b[0], cd->ctqs[pkt_sqs[pkt_idx]], desc0,
+			aura_handle, failed_buff, &n_nix_fc_drop);
+
+      pkt_idx += 1;
+      b += 1;
+    }
+
+  /*
+   * Free packets which failed in nix_fc_check.
+   * These packet indices are stored in failed_buff,
+   * as they may not be contiguous when received.
+   */
+  if (PREDICT_FALSE (n_nix_fc_drop))
+    vlib_buffer_free (vm, failed_buff, n_nix_fc_drop);
+
+  return tx_pkts - n_nix_fc_drop;
+}
+
+i32 static_always_inline
+oct_pkts_send_ipsec_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
+			   oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
+			   vnet_dev_tx_queue_t *txq, u16 tx_pkts,
+			   vlib_buffer_t **bufs, u32 tm_sq)
 {
   oct_ipsec_main_t *im = &oct_ipsec_main;
   oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
@@ -1292,8 +1495,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
   u64 aura_handle = ptd->aura_handle;
   vnet_dev_t *dev = txq->port->dev;
   oct_device_t *cd = vnet_dev_get_data (dev);
-  u32 current_sq0, current_sq1, current_sq2, current_sq3;
-  u64 sq_handle0, sq_handle1, sq_handle2, sq_handle3;
   u32 sa0_index, sa1_index, sa2_index, sa3_index;
   u32 current_sa0_index = ~0, current_sa1_index = ~0;
   u32 current_sa2_index = ~0, current_sa3_index = ~0;
@@ -1303,29 +1504,21 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
   u64 core_lmt_base_addr, lmt_arg, core_lmt_id;
   oct_ipsec_outbound_pkt_meta_t *pkt_meta[4];
   u16 n_cpt_fc_drop = 0, n_nix_fc_drop = 0;
-  u16 n_left0, n_left1, n_left2, n_left3;
+  u8 cpt_cq_ena = cd->cpt_cq_ena;
   u16 n_packets;
   struct roc_cpt_lf *cpt_lf = NULL;
-  u32 failed_buff[VLIB_FRAME_SIZE];
   u32 from[VLIB_FRAME_SIZE];
-  u16 sq0, sq1, sq2, sq3;
+  oct_txq_t *ipsec_ctq0;
   struct roc_nix_sq *sq;
-  u32 quad_bit, count;
+  u64 sq_handle;
   vlib_buffer_t **b;
   u64 *lmt_line[4];
   u64 n_dwords[4];
 
   b = bufs;
-
-  sq_handle0 = 0;
-  sq_handle1 = 0;
-  sq_handle2 = 0;
-  sq_handle3 = 0;
-
-  current_sq0 = ~0;
-  current_sq1 = ~0;
-  current_sq2 = ~0;
-  current_sq3 = ~0;
+  ipsec_ctq0 = cd->ctqs[tm_sq];
+  sq = &ipsec_ctq0->sq;
+  sq_handle = sq->qid;
 
   core_lmt_base_addr = (uintptr_t) ctq->lmt_addr;
   ROC_LMT_BASE_ID_GET (core_lmt_base_addr, core_lmt_id);
@@ -1337,19 +1530,20 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 
   /* Check CPT flow control */
   cpt_lf = roc_nix_inl_outb_lf_base_get (cd->nix);
-  n_left0 = oct_check_fc_cpt (cpt_lf, (u32 *) &cd->cached_cpt_pkts, tx_pkts);
-  n_cpt_fc_drop = tx_pkts - n_left0;
+  n_packets = oct_check_fc_cpt (cpt_lf, (u32 *) &cd->cached_cpt_pkts, tx_pkts);
+  n_cpt_fc_drop = tx_pkts - n_packets;
 
-  if (!n_left0)
+  if (!n_packets)
     goto cpt_fc_drop;
 
   /* Process packets up to CPT queue depth */
-  n_packets = n_left0;
-
-  n_left0 = 0;
-  n_left1 = 0;
-  n_left2 = 0;
-  n_left3 = 0;
+  if (PREDICT_FALSE (
+	!oct_check_fc_nix (sq, &ipsec_ctq0->cached_pkts, n_packets)))
+    {
+      n_nix_fc_drop = n_packets;
+      n_packets = 0;
+      goto nix_fc_drop;
+    }
 
   while (n_packets > 3)
     {
@@ -1388,7 +1582,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      sess1->inst.w7.s.cptr = (u64) sess1->out_sa[cd->nix_idx];
 	    }
 	  current_sa1_index = sa1_index;
-	  ALWAYS_ASSERT (current_sa0_index <
+	  ALWAYS_ASSERT (current_sa1_index <
 			 vec_len (im->inline_ipsec_sessions));
 	}
 
@@ -1432,10 +1626,260 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
       inst2.res_addr = (u64) &oct_ipsec_outb_data (b[2])->res;
       inst3.res_addr = (u64) &oct_ipsec_outb_data (b[3])->res;
 
-      inst0.cq_ena = cd->cpt_cq_ena;
-      inst1.cq_ena = cd->cpt_cq_ena;
-      inst2.cq_ena = cd->cpt_cq_ena;
-      inst3.cq_ena = cd->cpt_cq_ena;
+      inst0.cq_ena = cpt_cq_ena;
+      inst1.cq_ena = cpt_cq_ena;
+      inst2.cq_ena = cpt_cq_ena;
+      inst3.cq_ena = cpt_cq_ena;
+
+      inst0.w2.u64 = sess0->inst.w2.u64;
+      inst1.w2.u64 = sess1->inst.w2.u64;
+      inst2.w2.u64 = sess2->inst.w2.u64;
+      inst3.w2.u64 = sess3->inst.w2.u64;
+
+      inst0.w3.u64 = (uintptr_t) (b[0]);
+      inst1.w3.u64 = (uintptr_t) (b[1]);
+      inst2.w3.u64 = (uintptr_t) (b[2]);
+      inst3.w3.u64 = (uintptr_t) (b[3]);
+
+      inst0.w3.u64 |= 0x1ULL;
+      inst1.w3.u64 |= 0x1ULL;
+      inst2.w3.u64 |= 0x1ULL;
+      inst3.w3.u64 |= 0x1ULL;
+
+      inst0.w7.u64 = sess0->inst.w7.u64;
+      inst1.w7.u64 = sess1->inst.w7.u64;
+      inst2.w7.u64 = sess2->inst.w7.u64;
+      inst3.w7.u64 = sess3->inst.w7.u64;
+
+      lmt_arg = ROC_CN10K_CPT_LMT_ARG | (uint64_t) core_lmt_id;
+
+      oct_prepare_ipsec_inst (vm, b[0], sq_handle, aura_handle, &pkt_meta[0],
+			      &inst0, &n_dwords[0], sess0);
+      oct_prepare_ipsec_inst (vm, b[1], sq_handle, aura_handle, &pkt_meta[1],
+			      &inst1, &n_dwords[1], sess1);
+      oct_prepare_ipsec_inst (vm, b[2], sq_handle, aura_handle, &pkt_meta[2],
+			      &inst2, &n_dwords[2], sess2);
+      oct_prepare_ipsec_inst (vm, b[3], sq_handle, aura_handle, &pkt_meta[3],
+			      &inst3, &n_dwords[3], sess3);
+
+      oct_submit_quad_packets (lmt_arg, cd, &inst0, &inst1, &inst2, &inst3,
+			       n_dwords, lmt_line);
+
+      b += 4;
+      n_packets -= 4;
+    }
+
+  while (n_packets)
+    {
+      pkt_meta[0] =
+	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[0]);
+      sa0_index = vnet_buffer (b[0])->ipsec.sad_index;
+      if (sa0_index != current_sa0_index)
+	{
+	  sess0 = pool_elt_at_index (im->inline_ipsec_sessions, sa0_index);
+	  if (!sess0->inst.w7.s.cptr)
+	    {
+	      sess0->sq =
+		((sa0_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[cd->nix_idx];
+	    }
+	  current_sa0_index = sa0_index;
+	  ALWAYS_ASSERT (current_sa0_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      oct_ipsec_outb_data (b[0])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      inst0.res_addr = (u64) &oct_ipsec_outb_data (b[0])->res;
+      inst0.cq_ena = cpt_cq_ena;
+      inst0.w2.u64 = sess0->inst.w2.u64;
+      inst0.w3.u64 = (uintptr_t) (b[0]);
+      inst0.w3.u64 |= 0x1ULL;
+      inst0.w7.u64 = sess0->inst.w7.u64;
+
+      oct_prepare_ipsec_inst (vm, b[0], sq_handle, aura_handle, &pkt_meta[0],
+			      &inst0, &n_dwords[0], sess0);
+
+      roc_lmt_mov_seg ((void *) lmt_line[0], &inst0, 4);
+      lmt_arg = ROC_CN10K_CPT_LMT_ARG | core_lmt_id;
+      roc_lmt_submit_steorl (lmt_arg, cd->cpt_io_addr);
+      /*
+       * Add a memory barrier so that LMTLINEs from the previous iteration
+       * can be reused for a subsequent transfer.
+       */
+      asm volatile ("dmb oshst" ::: "memory");
+
+      n_packets -= 1;
+      b += 1;
+    }
+
+  /* Free packets which failed in nix_fc_check */
+nix_fc_drop:
+  if (PREDICT_FALSE (n_nix_fc_drop))
+    {
+      vlib_get_buffer_indices_with_offset (vm, (void **) b, from,
+					   n_nix_fc_drop, 0);
+      vlib_buffer_free (vm, from, n_nix_fc_drop);
+      b += n_nix_fc_drop;
+    }
+
+cpt_fc_drop:
+  if (PREDICT_FALSE (n_cpt_fc_drop))
+    {
+      vlib_get_buffer_indices_with_offset (vm, (void **) b, from,
+					   n_cpt_fc_drop, 0);
+      vlib_buffer_free (vm, from, n_cpt_fc_drop);
+    }
+
+  return tx_pkts - n_cpt_fc_drop - n_nix_fc_drop;
+}
+
+i32 static_always_inline
+oct_pkts_send_ipsec_mixed (vlib_main_t *vm, vlib_node_runtime_t *node,
+			   oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
+			   vnet_dev_tx_queue_t *txq, u16 tx_pkts,
+			   vlib_buffer_t **bufs, u32 *ipsec_sqs,
+			   const u32 features)
+{
+  oct_ipsec_main_t *im = &oct_ipsec_main;
+  oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
+  vnet_dev_port_interfaces_t *ifs = txq->port->interfaces;
+  u16 num_tx_queues = ifs->num_tx_queues;
+  u64 aura_handle = ptd->aura_handle;
+  vnet_dev_t *dev = txq->port->dev;
+  oct_device_t *cd = vnet_dev_get_data (dev);
+  u64 sq_handle0 = 0, sq_handle1 = 0, sq_handle2 = 0, sq_handle3 = 0;
+  u32 sa0_index, sa1_index, sa2_index, sa3_index;
+  u32 current_sa0_index = ~0, current_sa1_index = ~0;
+  u32 current_sa2_index = ~0, current_sa3_index = ~0;
+  oct_ipsec_session_t *sess0 = NULL, *sess1 = NULL;
+  oct_ipsec_session_t *sess2 = NULL, *sess3 = NULL;
+  struct cpt_inst_s inst0 = { 0 }, inst1 = { 0 }, inst2 = { 0 }, inst3 = { 0 };
+  u64 core_lmt_base_addr, lmt_arg, core_lmt_id;
+  oct_ipsec_outbound_pkt_meta_t *pkt_meta[4];
+  u16 n_cpt_fc_drop = 0, n_nix_fc_drop = 0;
+  u16 n_left0 = 0, n_left1 = 0, n_left2 = 0, n_left3 = 0;
+  u8 cpt_cq_ena = cd->cpt_cq_ena;
+  u16 n_packets;
+  struct roc_cpt_lf *cpt_lf = NULL;
+  u32 failed_buff[VLIB_FRAME_SIZE];
+  u32 from[VLIB_FRAME_SIZE];
+  u32 current_sq0 = ~0, current_sq1 = ~0;
+  u32 current_sq2 = ~0, current_sq3 = ~0;
+  u32 sq0, sq1, sq2, sq3;
+  oct_txq_t *ctq0;
+  struct roc_nix_sq *sq;
+  u32 quad_bit, count;
+  u32 pkt_idx = 0;
+  vlib_buffer_t **b;
+  u64 *lmt_line[4];
+  u64 n_dwords[4];
+
+  b = bufs;
+
+  core_lmt_base_addr = (uintptr_t) ctq->lmt_addr;
+  ROC_LMT_BASE_ID_GET (core_lmt_base_addr, core_lmt_id);
+
+  lmt_line[0] = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 0);
+  lmt_line[1] = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 1);
+  lmt_line[2] = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 2);
+  lmt_line[3] = OCT_LMT_GET_LINE_ADDR (core_lmt_base_addr, 3);
+
+  /* Check CPT flow control */
+  cpt_lf = roc_nix_inl_outb_lf_base_get (cd->nix);
+  n_left0 = oct_check_fc_cpt (cpt_lf, (u32 *) &cd->cached_cpt_pkts, tx_pkts);
+  n_cpt_fc_drop = tx_pkts - n_left0;
+
+  if (!n_left0)
+    goto cpt_fc_drop;
+
+  /* Process packets up to CPT queue depth */
+  n_packets = n_left0;
+
+  while (n_packets > 3)
+    {
+      pkt_meta[0] =
+	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[0]);
+      pkt_meta[1] =
+	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[1]);
+      pkt_meta[2] =
+	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[2]);
+      pkt_meta[3] =
+	(oct_ipsec_outbound_pkt_meta_t *) OCT_EXT_HDR_FROM_VLIB_BUFFER (b[3]);
+
+      sa0_index = vnet_buffer (b[0])->ipsec.sad_index;
+      if (sa0_index != current_sa0_index)
+	{
+	  sess0 = pool_elt_at_index (im->inline_ipsec_sessions, sa0_index);
+	  if (!sess0->inst.w7.s.cptr)
+	    {
+	      sess0->inst.w7.s.cptr = (u64) sess0->out_sa[cd->nix_idx];
+	      sess0->sq =
+		((sa0_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	    }
+	  current_sa0_index = sa0_index;
+	  ALWAYS_ASSERT (current_sa0_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      sa1_index = vnet_buffer (b[1])->ipsec.sad_index;
+      if (sa1_index != current_sa1_index)
+	{
+	  sess1 = pool_elt_at_index (im->inline_ipsec_sessions, sa1_index);
+	  if (!sess1->inst.w7.s.cptr)
+	    {
+	      sess1->sq =
+		((sa1_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess1->inst.w7.s.cptr = (u64) sess1->out_sa[cd->nix_idx];
+	    }
+	  current_sa1_index = sa1_index;
+	  ALWAYS_ASSERT (current_sa1_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      sa2_index = vnet_buffer (b[2])->ipsec.sad_index;
+      if (sa2_index != current_sa2_index)
+	{
+	  sess2 = pool_elt_at_index (im->inline_ipsec_sessions, sa2_index);
+	  if (!sess2->inst.w7.s.cptr)
+	    {
+	      sess2->sq =
+		((sa2_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess2->inst.w7.s.cptr = (u64) sess2->out_sa[cd->nix_idx];
+	    }
+	  current_sa2_index = sa2_index;
+	  ALWAYS_ASSERT (current_sa2_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      sa3_index = vnet_buffer (b[3])->ipsec.sad_index;
+      if (sa3_index != current_sa3_index)
+	{
+	  sess3 = pool_elt_at_index (im->inline_ipsec_sessions, sa3_index);
+	  if (!sess3->inst.w7.s.cptr)
+	    {
+	      sess3->sq =
+		((sa3_index % vlib_num_workers ()) + 1) % num_tx_queues;
+	      sess3->inst.w7.s.cptr = (u64) sess3->out_sa[cd->nix_idx];
+	    }
+	  current_sa3_index = sa3_index;
+	  ALWAYS_ASSERT (current_sa3_index <
+			 vec_len (im->inline_ipsec_sessions));
+	}
+
+      oct_ipsec_outb_data (b[0])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      oct_ipsec_outb_data (b[1])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      oct_ipsec_outb_data (b[2])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+      oct_ipsec_outb_data (b[3])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
+
+      inst0.res_addr = (u64) &oct_ipsec_outb_data (b[0])->res;
+      inst1.res_addr = (u64) &oct_ipsec_outb_data (b[1])->res;
+      inst2.res_addr = (u64) &oct_ipsec_outb_data (b[2])->res;
+      inst3.res_addr = (u64) &oct_ipsec_outb_data (b[3])->res;
+
+      inst0.cq_ena = cpt_cq_ena;
+      inst1.cq_ena = cpt_cq_ena;
+      inst2.cq_ena = cpt_cq_ena;
+      inst3.cq_ena = cpt_cq_ena;
 
       inst0.w2.u64 = sess0->inst.w2.u64;
       inst1.w2.u64 = sess1->inst.w2.u64;
@@ -1462,41 +1906,53 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
       sq2 = sess2->sq;
       sq3 = sess3->sq;
 
-      quad_bit = 0;
-      count = 0;
+      if (features & OCT_TX_TM)
+	{
+	  if (PREDICT_TRUE (ipsec_sqs[pkt_idx] != ~0))
+	    sq0 = ipsec_sqs[pkt_idx];
+	  if (PREDICT_TRUE (ipsec_sqs[pkt_idx + 1] != ~0))
+	    sq1 = ipsec_sqs[pkt_idx + 1];
+	  if (PREDICT_TRUE (ipsec_sqs[pkt_idx + 2] != ~0))
+	    sq2 = ipsec_sqs[pkt_idx + 2];
+	  if (PREDICT_TRUE (ipsec_sqs[pkt_idx + 3] != ~0))
+	    sq3 = ipsec_sqs[pkt_idx + 3];
+	}
 
       if (current_sq0 != sq0)
 	{
-	  ctq = cd->ctqs[sq0];
-	  sq = &ctq->sq;
+	  ctq0 = cd->ctqs[sq0];
+	  sq = &ctq0->sq;
 	  sq_handle0 = sq->qid;
-	  n_left0 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
+	  n_left0 = oct_check_fc_nix (sq, &ctq0->cached_pkts, n_packets >> 2);
 	  current_sq0 = sq0;
 	}
       if (current_sq1 != sq1)
 	{
-	  ctq = cd->ctqs[sq1];
-	  sq = &ctq->sq;
+	  ctq0 = cd->ctqs[sq1];
+	  sq = &ctq0->sq;
 	  sq_handle1 = sq->qid;
-	  n_left1 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
+	  n_left1 = oct_check_fc_nix (sq, &ctq0->cached_pkts, n_packets >> 2);
 	  current_sq1 = sq1;
 	}
       if (current_sq2 != sq2)
 	{
-	  ctq = cd->ctqs[sq2];
-	  sq = &ctq->sq;
+	  ctq0 = cd->ctqs[sq2];
+	  sq = &ctq0->sq;
 	  sq_handle2 = sq->qid;
-	  n_left2 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
+	  n_left2 = oct_check_fc_nix (sq, &ctq0->cached_pkts, n_packets >> 2);
 	  current_sq2 = sq2;
 	}
       if (current_sq3 != sq3)
 	{
-	  ctq = cd->ctqs[sq3];
-	  sq = &ctq->sq;
+	  ctq0 = cd->ctqs[sq3];
+	  sq = &ctq0->sq;
 	  sq_handle3 = sq->qid;
-	  n_left3 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets >> 2);
+	  n_left3 = oct_check_fc_nix (sq, &ctq0->cached_pkts, n_packets >> 2);
 	  current_sq3 = sq3;
 	}
+
+      quad_bit = 0;
+      count = 0;
       quad_bit |= !(!n_left0) << 0;
       quad_bit |= !(!n_left1) << 1;
       quad_bit |= !(!n_left2) << 2;
@@ -1521,7 +1977,6 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  n_left1 -= 1;
 	  n_left2 -= 1;
 	  n_left3 -= 1;
-	  count += 4;
 	}
       else if (quad_bit != 0x0)
 	{
@@ -1529,8 +1984,8 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	    {
 	      oct_prepare_ipsec_inst (vm, b[0], sq_handle0, aura_handle,
 				      &pkt_meta[0], &inst0, &n_dwords[0],
-				      sess0),
-		roc_lmt_mov_seg ((void *) lmt_line[count], &inst0, 4);
+				      sess0);
+	      roc_lmt_mov_seg ((void *) lmt_line[count], &inst0, 4);
 	      count++;
 	      n_left0 -= 1;
 	    }
@@ -1592,6 +2047,10 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  else
 	    lmt_arg |= (count - 1) << 12;
 	  roc_lmt_submit_steorl (lmt_arg, cd->cpt_io_addr);
+	  /*
+	   * Add a memory barrier so that LMTLINEs from the previous
+	   * iteration can be reused for a subsequent transfer.
+	   */
 	  asm volatile ("dmb oshst" ::: "memory");
 	}
       else if (quad_bit == 0x0)
@@ -1604,12 +2063,11 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 	}
 
       b += 4;
+      pkt_idx += 4;
       n_packets -= 4;
     }
 
   current_sq0 = ~0;
-  sq_handle0 = 0;
-  n_left0 = 0;
 
   while (n_packets)
     {
@@ -1632,22 +2090,26 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 
       oct_ipsec_outb_data (b[0])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
       inst0.res_addr = (u64) &oct_ipsec_outb_data (b[0])->res;
-      inst0.cq_ena = cd->cpt_cq_ena;
+      inst0.cq_ena = cpt_cq_ena;
       inst0.w2.u64 = sess0->inst.w2.u64;
       inst0.w3.u64 = (uintptr_t) (b[0]);
       inst0.w3.u64 |= 0x1ULL;
       inst0.w7.u64 = sess0->inst.w7.u64;
 
-      sq0 = sess0->sq;
+      if ((features & OCT_TX_TM) && ipsec_sqs[pkt_idx] != ~0)
+	sq0 = ipsec_sqs[pkt_idx];
+      else
+	sq0 = sess0->sq;
 
       if (current_sq0 != sq0)
 	{
-	  ctq = cd->ctqs[sq0];
-	  sq = &ctq->sq;
+	  ctq0 = cd->ctqs[sq0];
+	  sq = &ctq0->sq;
 	  sq_handle0 = sq->qid;
-	  n_left0 = oct_check_fc_nix (sq, &ctq->cached_pkts, n_packets);
+	  n_left0 = oct_check_fc_nix (sq, &ctq0->cached_pkts, n_packets);
 	  current_sq0 = sq0;
 	}
+
       if (!n_left0)
 	{
 	  failed_buff[n_nix_fc_drop] = vlib_get_buffer_index (vm, b[0]);
@@ -1671,8 +2133,10 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
       asm volatile ("dmb oshst" ::: "memory");
 
       n_left0 -= 1;
+
     next:
       n_packets -= 1;
+      pkt_idx += 1;
       b += 1;
     }
 
@@ -1695,8 +2159,38 @@ cpt_fc_drop:
   return tx_pkts - n_cpt_fc_drop - n_nix_fc_drop;
 }
 
-VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
-(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
+i32 static_always_inline
+oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
+		     oct_per_thread_data_t *ptd, oct_tx_ctx_t *ctx,
+		     vnet_dev_tx_queue_t *txq, u16 tx_pkts,
+		     vlib_buffer_t **bufs, u32 *ipsec_sqs,
+		     u32 ipsec_all_same_sq, const u32 features)
+{
+  if (ipsec_all_same_sq)
+    return oct_pkts_send_ipsec_batch (vm, node, ptd, ctx, txq, tx_pkts, bufs,
+				      ipsec_sqs[0]);
+
+  return oct_pkts_send_ipsec_mixed (vm, node, ptd, ctx, txq, tx_pkts, bufs,
+				    ipsec_sqs, features);
+}
+
+i32 static_always_inline
+oct_pkts_send (vlib_main_t *vm, oct_per_thread_data_t *ptd, oct_device_t *cd,
+	       u16 tx_pkts, vlib_buffer_t **bufs, u32 *pkt_sqs,
+	       u32 all_same_sq)
+{
+  u64 aura_handle = ptd->aura_handle;
+
+  if (PREDICT_TRUE (all_same_sq))
+    return oct_pkts_send_batch (vm, cd->ctqs[pkt_sqs[0]], aura_handle, tx_pkts,
+				bufs);
+
+  return oct_pkts_send_mixed (vm, aura_handle, tx_pkts, bufs, pkt_sqs, cd);
+}
+
+static_always_inline uword
+oct_tx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
+		    vlib_frame_t *frame, const u32 features)
 {
   vnet_dev_tx_node_runtime_t *rt = vnet_dev_get_tx_node_runtime (node);
   vnet_dev_tx_queue_t *txq = rt->tx_queue;
@@ -1706,9 +2200,14 @@ VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
   u32 node_index = node->node_index;
   u32 n_left, n_pkts = frame->n_vectors;
   vlib_buffer_t *buffers[VLIB_FRAME_SIZE + 8], **b = buffers;
-  vlib_buffer_t *ipsec_buff[VLIB_FRAME_SIZE + 8];
   vlib_buffer_t *buff[VLIB_FRAME_SIZE + 8];
+  vlib_buffer_t *ipsec_buff[VLIB_FRAME_SIZE + 8];
+  u32 pkt_sqs[VLIB_FRAME_SIZE];
+  u32 ipsec_sqs[VLIB_FRAME_SIZE];
   int ipsec_cnt = 0, pkt_cnt = 0;
+  u32 all_same_sq = 1, ipsec_all_same_sq = 0;
+  u32 default_sq = ctq->sq.qid;
+  u32 tmq;
   u32 thread_index = vm->thread_index;
 #ifdef PLATFORM_OCTEON9
   u64 lmt_id = 0;
@@ -1731,27 +2230,51 @@ VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
     .lmt_lines = ctq->lmt_addr + (lmt_id << ROC_LMT_LINE_SIZE_LOG2),
   };
 
-  oct_batch_free (vm, &ctx, txq, ptd, OCT_TX_IPSEC_TM_NODE);
+  oct_batch_free (vm, &ctx, txq, ptd, 0);
 
   vlib_get_buffers (vm, vlib_frame_vector_args (frame), b, n_pkts);
   n_left = n_pkts;
+
   while (n_pkts)
     {
-      if (vnet_buffer (b[0])->oflags & VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD)
-	ipsec_buff[ipsec_cnt++] = b[0];
+      tmq = ~0;
+
+      if ((features & OCT_TX_TM) &&
+	  PREDICT_FALSE (b[0]->flags & VNET_BUFFER_F_TM_QUEUE_VALID))
+	tmq = oct_tm_get_node_id_from_flow_id (b[0]->flow_id);
+
+      if ((features & OCT_TX_IPSEC) &&
+	  (vnet_buffer (b[0])->oflags & VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD))
+	{
+	  ipsec_sqs[ipsec_cnt] = tmq;
+	  ipsec_buff[ipsec_cnt++] = b[0];
+	}
       else
-	buff[pkt_cnt++] = b[0];
+	{
+	  pkt_sqs[pkt_cnt] = (tmq != ~0) ? tmq : default_sq;
+	  buff[pkt_cnt++] = b[0];
+	}
 
       b++;
       n_pkts--;
     }
 
+  if (features & OCT_TX_TM)
+    {
+      if (pkt_cnt > 1)
+	all_same_sq = (clib_count_equal_u32 (pkt_sqs, pkt_cnt) == pkt_cnt);
+      if (ipsec_cnt > 1 && ipsec_sqs[0] != ~0)
+	ipsec_all_same_sq =
+	  (clib_count_equal_u32 (ipsec_sqs, ipsec_cnt) == ipsec_cnt);
+    }
+
   if (ipsec_cnt)
     ipsec_cnt =
-      oct_pkts_send_ipsec (vm, node, ptd, &ctx, txq, ipsec_cnt, ipsec_buff);
+      oct_pkts_send_ipsec (vm, node, ptd, &ctx, txq, ipsec_cnt, ipsec_buff,
+			   ipsec_sqs, ipsec_all_same_sq, features);
 
   if (pkt_cnt)
-    pkt_cnt = oct_pkts_send (vm, node, ptd, &ctx, txq, pkt_cnt, buff);
+    pkt_cnt = oct_pkts_send (vm, ptd, cd, pkt_cnt, buff, pkt_sqs, all_same_sq);
 
   if (PREDICT_FALSE (n_left != (ipsec_cnt + pkt_cnt)))
     {
@@ -1760,6 +2283,24 @@ VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
     }
 
   return (ipsec_cnt + pkt_cnt);
+}
+
+VNET_DEV_NODE_FN (oct_tx_tm_node)
+(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
+{
+  return oct_tx_node_inline (vm, node, frame, OCT_TX_TM);
+}
+
+VNET_DEV_NODE_FN (oct_tx_ipsec_node)
+(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
+{
+  return oct_tx_node_inline (vm, node, frame, OCT_TX_IPSEC);
+}
+
+VNET_DEV_NODE_FN (oct_tx_ipsec_tm_node)
+(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
+{
+  return oct_tx_node_inline (vm, node, frame, OCT_TX_IPSEC | OCT_TX_TM);
 }
 
 VNET_DEV_NODE_FN (oct_tx_node)

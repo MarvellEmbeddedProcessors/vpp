@@ -536,9 +536,9 @@ function pmd_tx_launch()
 function vpp_create_interfaces()
 {
 	echo "Creating VPP interfaces at runtime"
-	vpp_exec_cmd $VPP_PREFIX "device attach pci/$TM_PORT0 driver octeon"
+	vpp_exec_cmd $VPP_PREFIX "device attach pci/$TM_PORT0 driver octeon args egress_tm=true"
 	vpp_exec_cmd $VPP_PREFIX "device create-interface pci/$TM_PORT0 port 0 name eth0 num-rx-queues 4"
-	vpp_exec_cmd $VPP_PREFIX "device attach pci/$TM_PORT1 driver octeon"
+	vpp_exec_cmd $VPP_PREFIX "device attach pci/$TM_PORT1 driver octeon args egress_tm=true"
 	vpp_exec_cmd $VPP_PREFIX "device create-interface pci/$TM_PORT1 port 0 name eth1 num-rx-queues 4"
 }
 

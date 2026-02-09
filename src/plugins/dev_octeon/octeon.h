@@ -55,7 +55,8 @@ typedef enum
 {
   OCT_DEV_ARG_CRYPTO_N_DESC = 1,
   OCT_DEV_ARG_CPT_CQ_ENABLE,
-  OCT_DEV_ARG_END,
+  OCT_DEV_ARG_EGRESS_TM,
+  OCT_DEV_ARG_END
 } oct_dev_args_t;
 
 typedef enum
@@ -162,6 +163,7 @@ typedef struct
   u8 class_en;
   u8 rx_pause_en;
   u8 tx_pause_en;
+  u8 egress_tm : 1;
   u32 speed;
   struct plt_pci_device plt_pci_dev;
   struct roc_nix *nix;

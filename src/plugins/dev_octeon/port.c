@@ -9,6 +9,7 @@
 #include <dev_octeon/common.h>
 #include <dev_octeon/ipsec.h>
 #include <vnet/ethernet/ethernet.h>
+#include <dev_octeon/tm.h>
 
 #define OCT_FLOW_PREALLOC_SIZE	1
 #define OCT_FLOW_MAX_PRIORITY	7
@@ -35,6 +36,8 @@ oct_init_tm_args (tm_system_t *tm)
 {
   memset (tm, 0, sizeof (tm_system_t));
   memcpy (tm, &dev_oct_tm_ops, sizeof (tm_system_t));
+  if (!oct_tm_flow_id_to_node_id_hash)
+    oct_tm_flow_id_to_node_id_hash = hash_create (0, sizeof (uword));
   return 0;
 }
 
@@ -158,6 +161,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   u8 mac_addr[PLT_ETHER_ADDR_LEN];
   struct roc_nix *nix = cd->nix;
   bool is_allmulti_enable = false, is_flow_ctrl_enable = false;
+  bool is_egress_tm_enable = cd->egress_tm;
   vnet_dev_rv_t rv;
   u32 total_sz = 0;
   int rrv;
@@ -324,8 +328,11 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
   cp->q_intr_enabled = 1;
   oct_port_add_counters (vm, port);
 
-  oct_init_tm_args (&tm_system_ops);
-  tm_system_register (&tm_system_ops, ifs->primary_interface.hw_if_index);
+  if (is_egress_tm_enable)
+    {
+      oct_init_tm_args (&tm_system_ops);
+      tm_system_register (&tm_system_ops, ifs->primary_interface.hw_if_index);
+    }
 
   oct_pfc_sys_init_args (&pfc_system_ops);
   pfc_system_register (&pfc_system_ops, ifs->primary_interface.hw_if_index);

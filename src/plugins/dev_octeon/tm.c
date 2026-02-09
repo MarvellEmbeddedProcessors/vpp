@@ -15,12 +15,15 @@
 #include <dev_octeon/common.h>
 #include <base/roc_api.h>
 #include <common.h>
-#include "tm.h"
+#include <dev_octeon/tm.h>
+#include <vppinfra/hash.h>
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
   .subclass_name = "tm",
 };
+
+uword *oct_tm_flow_id_to_node_id_hash;
 
 static vnet_dev_rv_t
 oct_roc_err (vnet_dev_t *dev, int rv, char *fmt, ...)
@@ -38,11 +41,33 @@ oct_roc_err (vnet_dev_t *dev, int rv, char *fmt, ...)
   return VNET_DEV_ERR_INTERNAL;
 }
 
+/* Add a mapping of flow_id to tm_node_id */
+void
+oct_tm_add_flow_id_to_node_id_mapping (u32 flow_id, u32 tm_node_id)
+{
+  ASSERT (oct_tm_flow_id_to_node_id_hash);
+  hash_set (oct_tm_flow_id_to_node_id_hash, flow_id, tm_node_id);
+}
+
+/* Get the tm_node_id for a given flow_id */
+u32
+oct_tm_get_node_id_from_flow_id (u32 flow_id)
+{
+  uword *p;
+
+  ASSERT (oct_tm_flow_id_to_node_id_hash);
+
+  p = hash_get (oct_tm_flow_id_to_node_id_hash, flow_id);
+  if (PREDICT_FALSE (!p))
+    return ~0;
+
+  return p[0];
+}
+
 int
 oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
 		     u32 priority, u32 weight, u32 lvl,
-		     tm_node_params_t *params)
-
+		     tm_node_params_t *params, const char *flow_name)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -55,6 +80,7 @@ oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
   struct roc_nix_tm_node *tm_node = NULL;
   struct roc_nix_tm_shaper_profile *profile = NULL;
   int rc = 0;
+  u32 flow_id = 0;
 
   /* We don't support dynamic updates */
   if (roc_nix_tm_is_user_hierarchy_enabled (nix))
@@ -107,6 +133,21 @@ oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
       plt_free (tm_node);
       return oct_roc_err (dev, rc, "roc_nix_tm_node_add_err");
     }
+
+  /* Add the mapping of flow_id to tm_node_id if it's a leaf node */
+
+  if (roc_nix_tm_lvl_is_leaf (nix, lvl))
+    {
+      if (flow_name && flow_name[0])
+	{
+	  flow_id = tm_get_flow_id (flow_name);
+	  if (flow_id)
+	    oct_tm_add_flow_id_to_node_id_mapping (flow_id, node_id);
+	}
+    }
+  else
+    clib_warning ("Flow_name:%s is not used for non-leaf tm nodes\n",
+		  flow_name ? flow_name : "(null)");
 
   roc_nix_tm_shaper_default_red_algo (tm_node, profile);
   return 0;
