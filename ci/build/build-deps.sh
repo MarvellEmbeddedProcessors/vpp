@@ -23,7 +23,7 @@
 set -euo pipefail
 shopt -s extglob
 
-CROSS_COMPILE=${CROSS_COMPILE:-aarch64-marvell-linux-gnu}
+CROSS_COMPILE=${CROSS_COMPILE:-aarch64-none-linux-gnu}
 BUILD_ROOT=$(realpath $1)
 LIBUUID_DIR=${BUILD_ROOT}/libuuid
 DEPS_DIR=${BUILD_ROOT}/deps-prefix

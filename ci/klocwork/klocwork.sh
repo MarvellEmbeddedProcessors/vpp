@@ -46,7 +46,7 @@ fi
 BUILD_ROOT=
 DEPS_DIR=
 OCTEON_SYSROOT=
-export CROSS="aarch64-marvell-linux-gnu-"
+export CROSS="aarch64-none-linux-gnu-"
 export OCTEON_VERSION="cn10k"
 export PLATFORM="octeon"
 
