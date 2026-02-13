@@ -683,6 +683,8 @@ ip_vxlan_gpe_bypass_inline (vlib_main_t * vm,
   vtep6_key_t last_vtep6;	/* last IPv6 address / fib index
 				   matching a local VTEP address */
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
+  ip4_header_t *ip40 = NULL, *ip41 = NULL;
+  ip6_header_t *ip60 = NULL, *ip61 = NULL;
 
   vxlan4_gpe_tunnel_cache_t last4;
   vxlan6_gpe_tunnel_cache_t last6;
@@ -714,8 +716,6 @@ ip_vxlan_gpe_bypass_inline (vlib_main_t * vm,
       while (n_left_from >= 4 && n_left_to_next >= 2)
 	{
 	  vlib_buffer_t *b0, *b1;
-	  ip4_header_t *ip40, *ip41;
-	  ip6_header_t *ip60, *ip61;
 	  udp_header_t *udp0, *udp1;
 	  ip4_vxlan_gpe_header_t *iuvn4_0, *iuvn4_1;
 	  ip6_vxlan_gpe_header_t *iuvn6_0, *iuvn6_1;
@@ -961,8 +961,6 @@ ip_vxlan_gpe_bypass_inline (vlib_main_t * vm,
       while (n_left_from > 0 && n_left_to_next > 0)
 	{
 	  vlib_buffer_t *b0;
-	  ip4_header_t *ip40;
-	  ip6_header_t *ip60;
 	  udp_header_t *udp0;
 	  ip4_vxlan_gpe_header_t *iuvn4_0;
 	  ip6_vxlan_gpe_header_t *iuvn6_0;

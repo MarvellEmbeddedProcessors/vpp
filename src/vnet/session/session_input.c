@@ -77,7 +77,7 @@ app_worker_flush_events_inline (app_worker_t *app_wrk, u32 thread_index,
 {
   application_t *app = application_get (app_wrk->app_index);
   svm_msg_q_t *mq = app_wrk->event_queue;
-  u8 ring_index, mq_is_cong;
+  u8 ring_index, mq_is_cong = 0;
   session_state_t old_state;
   session_event_t *evt;
   u32 n_evts = 128, i;

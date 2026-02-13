@@ -81,8 +81,8 @@ ipip_input (vlib_main_t * vm, vlib_node_runtime_t * node,
 	{
 	  u32 bi0;
 	  vlib_buffer_t *b0;
-	  ip4_header_t *ip40;
-	  ip6_header_t *ip60;
+	  ip4_header_t *ip40 = NULL;
+	  ip6_header_t *ip60 = NULL;
 	  u32 next0 = IPIP_INPUT_NEXT_DROP;
 	  u8 inner_protocol0;
 

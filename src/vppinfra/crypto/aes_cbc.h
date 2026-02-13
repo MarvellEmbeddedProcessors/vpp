@@ -474,7 +474,7 @@ static_always_inline void
 clib_aes_cbc_key_expand (aes_cbc_key_data_t *kd, const u8 *key,
 			 aes_key_size_t ks)
 {
-  u8x16 e[15], d[15];
+  u8x16 e[15] = { 0 }, d[15];
   aes_key_expand (e, key, ks);
   aes_key_enc_to_dec (e, d, ks);
   for (int i = 0; i < AES_KEY_ROUNDS (ks) + 1; i++)

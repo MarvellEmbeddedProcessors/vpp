@@ -286,7 +286,7 @@ vrrp_arp_nd_next (vlib_buffer_t * b, u32 * next_index, u32 * vr_index,
   icmp6_neighbor_solicitation_or_advertisement_header_t *sol_adv = 0;
   icmp6_neighbor_discovery_ethernet_link_layer_address_option_t *lladdr = 0;
   /* ARP vars */
-  ethernet_arp_header_t *arp;
+  ethernet_arp_header_t *arp = NULL;
   ip4_address_t ip4_addr;
 
   if (is_ipv6)
@@ -811,6 +811,8 @@ vrrp_accept_owner_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 {
   u32 n_left_from, *from, *to_next;
   u32 next_index = node->cached_next_index;
+  ip4_header_t *ip40 = NULL, *ip41 = NULL;
+  ip6_header_t *ip60 = NULL, *ip61 = NULL;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -828,8 +830,6 @@ vrrp_accept_owner_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  u32 next0, next1;
 	  u32 error0, error1;
 	  vrrp_header_t *vrrp0, *vrrp1;
-	  ip4_header_t *ip40, *ip41;
-	  ip6_header_t *ip60, *ip61;
 	  u32 sw_if_index0, sw_if_index1;
 
 	  bi0 = from[0];
@@ -946,8 +946,6 @@ vrrp_accept_owner_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  u32 next0;
 	  u32 error0;
 	  vrrp_header_t *vrrp0;
-	  ip4_header_t *ip4;
-	  ip6_header_t *ip6;
 	  u32 sw_if_index0;
 
 	  bi0 = from[0];
@@ -965,22 +963,22 @@ vrrp_accept_owner_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  /* find VRRP advertisements which should be sent to VRRP node */
 	  if (is_ipv6)
 	    {
-	      ip6 = vlib_buffer_get_current (b0);
+	      ip60 = vlib_buffer_get_current (b0);
 
-	      if (PREDICT_FALSE (ip6->protocol == IP_PROTOCOL_VRRP))
+	      if (PREDICT_FALSE (ip60->protocol == IP_PROTOCOL_VRRP))
 		{
-		  vrrp0 = (vrrp_header_t *) (ip6 + 1);
+		  vrrp0 = (vrrp_header_t *) (ip60 + 1);
 		  vrrp_accept_owner_next_node (sw_if_index0, vrrp0->vr_id,
 					       is_ipv6, &next0, &error0);
 		}
 	    }
 	  else
 	    {
-	      ip4 = vlib_buffer_get_current (b0);
+	      ip40 = vlib_buffer_get_current (b0);
 
-	      if (PREDICT_FALSE (ip4->protocol == IP_PROTOCOL_VRRP))
+	      if (PREDICT_FALSE (ip40->protocol == IP_PROTOCOL_VRRP))
 		{
-		  vrrp0 = (vrrp_header_t *) (ip4 + 1);
+		  vrrp0 = (vrrp_header_t *) (ip40 + 1);
 		  vrrp_accept_owner_next_node (sw_if_index0, vrrp0->vr_id,
 					       is_ipv6, &next0, &error0);
 		}
@@ -997,13 +995,13 @@ vrrp_accept_owner_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	      t->is_ipv6 = is_ipv6;
 	      if (is_ipv6)
 		{
-		  ip6_address_copy (&t->src.ip6, &ip6->src_address);
-		  ip6_address_copy (&t->dst.ip6, &ip6->dst_address);
+		  ip6_address_copy (&t->src.ip6, &ip60->src_address);
+		  ip6_address_copy (&t->dst.ip6, &ip60->dst_address);
 		}
 	      else
 		{
-		  t->src.ip4.as_u32 = ip4->src_address.as_u32;
-		  t->dst.ip4.as_u32 = ip4->dst_address.as_u32;
+		  t->src.ip4.as_u32 = ip40->src_address.as_u32;
+		  t->dst.ip4.as_u32 = ip40->dst_address.as_u32;
 		}
 	    }
 

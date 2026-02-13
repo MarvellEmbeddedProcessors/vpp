@@ -387,7 +387,7 @@ load_balance_map_alloc (const load_balance_path_t *paths)
 {
     load_balance_map_t *lbm;
     u32 ii;
-    vlib_main_t *vm;
+    vlib_main_t *vm = NULL;
     u8 did_barrier_sync;
 
     dpo_pool_barrier_sync (vm, load_balance_map_pool, did_barrier_sync);

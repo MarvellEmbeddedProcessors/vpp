@@ -82,6 +82,8 @@ geneve_input (vlib_main_t * vm,
   u32 thread_index = vm->thread_index;
   u32 stats_sw_if_index, stats_n_packets, stats_n_bytes;
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
+  ip4_header_t *ip4_0 = NULL, *ip4_1 = NULL;
+  ip6_header_t *ip6_0 = NULL, *ip6_1 = NULL;
 
   if (is_ip4)
     last_key4.as_u64 = ~0;
@@ -106,8 +108,6 @@ geneve_input (vlib_main_t * vm,
 	  u32 bi0, bi1;
 	  vlib_buffer_t *b0, *b1;
 	  u32 next0, next1;
-	  ip4_header_t *ip4_0, *ip4_1;
-	  ip6_header_t *ip6_0, *ip6_1;
 	  geneve_header_t *geneve0, *geneve1;
 	  uword *p0, *p1;
 	  u32 tunnel_index0, tunnel_index1;
@@ -541,8 +541,6 @@ geneve_input (vlib_main_t * vm,
 	  u32 bi0;
 	  vlib_buffer_t *b0;
 	  u32 next0;
-	  ip4_header_t *ip4_0;
-	  ip6_header_t *ip6_0;
 	  geneve_header_t *geneve0;
 	  uword *p0;
 	  u32 tunnel_index0;
@@ -868,6 +866,8 @@ ip_geneve_bypass_inline (vlib_main_t * vm,
   vtep6_key_t last_vtep6;	/* last IPv6 address / fib index
 				   matching a local VTEP address */
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
+  ip4_header_t *ip40 = NULL, *ip41 = NULL;
+  ip6_header_t *ip60 = NULL, *ip61 = NULL;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -890,8 +890,6 @@ ip_geneve_bypass_inline (vlib_main_t * vm,
       while (n_left_from >= 4 && n_left_to_next >= 2)
 	{
 	  vlib_buffer_t *b0, *b1;
-	  ip4_header_t *ip40, *ip41;
-	  ip6_header_t *ip60, *ip61;
 	  udp_header_t *udp0, *udp1;
 	  u32 bi0, ip_len0, udp_len0, flags0, next0;
 	  u32 bi1, ip_len1, udp_len1, flags1, next1;
@@ -1120,8 +1118,6 @@ ip_geneve_bypass_inline (vlib_main_t * vm,
       while (n_left_from > 0 && n_left_to_next > 0)
 	{
 	  vlib_buffer_t *b0;
-	  ip4_header_t *ip40;
-	  ip6_header_t *ip60;
 	  udp_header_t *udp0;
 	  u32 bi0, ip_len0, udp_len0, flags0, next0;
 	  i32 len_diff0;

@@ -117,7 +117,7 @@ stat_segment_access_start (stat_segment_access_t * sa,
 			   stat_client_main_t * sm)
 {
   vlib_stats_shared_header_t *shared_header = sm->shared_header;
-  uint64_t max_time;
+  uint64_t max_time = 0;
 
   sa->epoch = shared_header->epoch;
   if (sm->timeout)

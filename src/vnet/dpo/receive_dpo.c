@@ -35,7 +35,7 @@ static receive_dpo_t *
 receive_dpo_alloc (void)
 {
     receive_dpo_t *rd;
-    vlib_main_t *vm;
+    vlib_main_t *vm = NULL;
     u8 did_barrier_sync;
 
     dpo_pool_barrier_sync (vm, receive_dpo_pool, did_barrier_sync);

@@ -71,7 +71,7 @@ qos_record_inline (vlib_main_t * vm,
 	  vlib_buffer_t *b0;
 	  u32 next0, bi0;
 	  qos_bits_t qos0;
-	  u8 l2_len;
+	  u8 l2_len = 0;
 
 	  next0 = 0;
 	  bi0 = from[0];

@@ -123,6 +123,7 @@ pvti_input_node_common (vlib_main_t *vm, vlib_node_runtime_t *node,
   u32 decap_failed_no_buffers = 0;
 
   pvti_main_t *pvm = &pvti_main;
+  pvti_packet_header_t *pvti0 = NULL;
 
   u32 thread_index = vlib_get_thread_index ();
   pvti_per_thread_data_t *ptd =
@@ -157,7 +158,7 @@ pvti_input_node_common (vlib_main_t *vm, vlib_node_runtime_t *node,
 	}
 
       b0 = vlib_get_buffer (vm, bi0);
-      pvti_packet_header_t *pvti0 = vlib_buffer_get_current (b0);
+      pvti0 = vlib_buffer_get_current (b0);
       u8 stream_index = pvti0->stream_index;
       max_chunk_count =
 	pvti0->chunk_count < MAX_CHUNKS ? pvti0->chunk_count : MAX_CHUNKS;

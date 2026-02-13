@@ -1605,7 +1605,7 @@ oct_crypto_enqueue_enc_dec (vlib_main_t *vm, vnet_crypto_async_frame_t *frame,
   oct_crypto_main_t *ocm = &oct_crypto_main;
   vnet_crypto_async_frame_elt_t *elts;
   oct_crypto_dev_t *crypto_dev = NULL;
-  oct_crypto_inflight_req_t *infl_req;
+  oct_crypto_inflight_req_t *infl_req = NULL;
   oct_crypto_pending_queue_t *pend_q;
   u64 dptr_start_ptr, curr_ptr;
   oct_crypto_sess_t *sess;
@@ -1839,7 +1839,7 @@ oct_crypto_frame_dequeue (vlib_main_t *vm, u32 *nb_elts_processed,
   oct_crypto_main_t *ocm = &oct_crypto_main;
   u32 deq_head, status = VNET_CRYPTO_OP_STATUS_COMPLETED;
   vnet_crypto_async_frame_elt_t *fe = NULL;
-  oct_crypto_inflight_req_t *infl_req;
+  oct_crypto_inflight_req_t *infl_req = NULL;
   oct_crypto_pending_queue_t *pend_q;
   vnet_crypto_async_frame_t *frame;
   volatile union cpt_res_s *res;

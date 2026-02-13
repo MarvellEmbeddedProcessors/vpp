@@ -767,6 +767,7 @@ memif_device_input_zc_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   memif_per_thread_data_t *ptd = vec_elt_at_index (mm->per_thread_data,
 						   thread_index);
   u16 cur_slot, last_slot, ring_size, n_slots, mask, head;
+  u32 next0 = 0, next1 = 0, next2 = 0, next3 = 0;
   i16 start_offset;
   u64 offset;
   u32 buffer_length;
@@ -847,7 +848,6 @@ memif_device_input_zc_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   while (n_from)
     {
       u32 n_left_to_next;
-      u32 next0, next1, next2, next3;
 
       vlib_get_next_frame (vm, node, next_index, to_next, n_left_to_next);
       while (n_from >= 8 && n_left_to_next >= 4)

@@ -41,7 +41,7 @@ static mpls_label_dpo_t *
 mpls_label_dpo_alloc (void)
 {
     mpls_label_dpo_t *mld;
-    vlib_main_t *vm;
+    vlib_main_t *vm = NULL;
     u8 did_barrier_sync;
 
     dpo_pool_barrier_sync (vm, mpls_label_dpo_pool, did_barrier_sync);
@@ -369,6 +369,8 @@ mpls_label_imposition_inline (vlib_main_t * vm,
                               const mpls_label_dpo_flags_t flags)
 {
     u32 n_left_from, next_index, * from, * to_next;
+    u8 ttl0 = 0, ttl1 = 0, ttl2 = 0, ttl3 = 0;
+    u8 exp0 = 0, exp1 = 0, exp2 = 0, exp3 = 0;
 
     from = vlib_frame_vector_args (from_frame);
     n_left_from = from_frame->n_vectors;
@@ -388,8 +390,6 @@ mpls_label_imposition_inline (vlib_main_t * vm,
             mpls_label_dpo_t *mld0, *mld1, *mld2, *mld3;
             vlib_buffer_t * b0, *b1, * b2, *b3;
             u32 next0, next1, next2, next3;
-            u8 ttl0, ttl1, ttl2, ttl3;
-            u8 exp0, exp1, exp2, exp3;
 
             bi0 = to_next[0] = from[0];
             bi1 = to_next[1] = from[1];
@@ -773,7 +773,6 @@ mpls_label_imposition_inline (vlib_main_t * vm,
             mpls_label_dpo_t *mld0;
             vlib_buffer_t * b0;
             u32 bi0, mldi0;
-            u8 ttl0, exp0;
             u32 next0;
 
             bi0 = from[0];

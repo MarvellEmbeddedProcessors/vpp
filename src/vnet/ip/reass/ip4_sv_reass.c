@@ -589,11 +589,11 @@ always_inline uword
 ip4_sv_reass_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		     vlib_frame_t *frame, struct ip4_sv_reass_args a)
 {
-  u32 *from = vlib_frame_vector_args (frame);
-  u32 n_left_from, n_left_to_next, *to_next, *to_next_aux, next_index;
+  u32 *from = vlib_frame_vector_args (frame), *to_next_aux = NULL;
+  u32 n_left_from, n_left_to_next, *to_next, next_index;
   ip4_sv_reass_main_t *rm = &ip4_sv_reass_main;
   ip4_sv_reass_per_thread_t *rt = &rm->per_thread_data[vm->thread_index];
-  u32 *context;
+  u32 *context = NULL;
   if (a.with_custom_context)
     context = vlib_frame_aux_args (frame);
 

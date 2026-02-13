@@ -2017,7 +2017,7 @@ ip6_full_reassembly_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b;
   u32 n_enq, n_left_from, *from;
   u16 thread_indices[VLIB_FRAME_SIZE], *ti;
-  u32 fq_index;
+  u32 fq_index = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;

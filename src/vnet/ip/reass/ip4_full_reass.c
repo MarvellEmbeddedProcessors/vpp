@@ -1175,7 +1175,7 @@ ip4_full_reass_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
     {
       u32 bi0;
       vlib_buffer_t *b0;
-      u32 next0;
+      u32 next0 = 0;
       u32 error0 = IP4_ERROR_NONE;
 
       bi0 = from[0];
@@ -1256,7 +1256,7 @@ ip4_full_reass_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	}
       else if (reass)
 	{
-	  u32 handoff_thread_idx;
+	  u32 handoff_thread_idx = 0;
 	  u32 counter = ~0;
 	  switch (ip4_full_reass_update (vm, node, rm, rt, reass, &bi0, &next0,
 					 &error0, CUSTOM == type,
@@ -1886,7 +1886,7 @@ ip4_full_reass_handoff_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b;
   u32 n_enq, n_left_from, *from;
   u16 thread_indices[VLIB_FRAME_SIZE], *ti;
-  u32 fq_index;
+  u32 fq_index = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;

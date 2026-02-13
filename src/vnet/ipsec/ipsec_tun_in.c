@@ -161,7 +161,7 @@ ipsec_tun_protect_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
       ipsec4_tunnel_kv_t *key40;
       ipsec6_tunnel_kv_t *key60;
       ip4_header_t *ip40;
-      ip6_header_t *ip60;
+      ip6_header_t *ip60 = NULL;
       esp_header_t *esp0;
       u16 buf_rewind0;
 

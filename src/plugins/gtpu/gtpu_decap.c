@@ -87,6 +87,8 @@ gtpu_input (vlib_main_t * vm,
   u32 pkts_decapsulated = 0;
   u32 thread_index = vlib_get_thread_index();
   u32 stats_sw_if_index, stats_n_packets, stats_n_bytes;
+  ip4_header_t *ip4_0 = NULL, *ip4_1 = NULL;
+  ip6_header_t *ip6_0 = NULL, *ip6_1 = NULL;
 
   if (is_ip4)
     last_key4.as_u64 = ~0;
@@ -124,8 +126,6 @@ gtpu_input (vlib_main_t * vm,
 	  // next operation to do with the packet
 	  u32 next0, next1;
 	  // IP4 header type
-	  ip4_header_t *ip4_0, *ip4_1;
-	  ip6_header_t *ip6_0, *ip6_1;
 	  gtpu_header_t *gtpu0, *gtpu1;
 	  i32 gtpu_hdr_len0, gtpu_hdr_len1;
 	  uword * p0, * p1;
@@ -857,9 +857,7 @@ gtpu_input (vlib_main_t * vm,
 	  u32 bi0;
 	  vlib_buffer_t * b0;
 	  u32 next0;
-          ip4_header_t * ip4_0;
-          ip6_header_t * ip6_0;
-          gtpu_header_t * gtpu0;
+	  gtpu_header_t *gtpu0;
 	  i32 gtpu_hdr_len0;
 	  uword * p0;
           u32 tunnel_index0;
@@ -1317,6 +1315,8 @@ ip_gtpu_bypass_inline (vlib_main_t * vm,
   vtep6_key_t last_vtep6;	/* last IPv6 address / fib index
 				   matching a local VTEP address */
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
+  ip4_header_t *ip40 = NULL, *ip41 = NULL;
+  ip6_header_t *ip60 = NULL, *ip61 = NULL;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -1337,15 +1337,13 @@ ip_gtpu_bypass_inline (vlib_main_t * vm,
 
       while (n_left_from >= 4 && n_left_to_next >= 2)
       	{
-      	  vlib_buffer_t * b0, * b1;
-      	  ip4_header_t * ip40, * ip41;
-      	  ip6_header_t * ip60, * ip61;
-      	  udp_header_t * udp0, * udp1;
-      	  u32 bi0, ip_len0, udp_len0, flags0, next0;
-      	  u32 bi1, ip_len1, udp_len1, flags1, next1;
-      	  i32 len_diff0, len_diff1;
-      	  u8 error0, good_udp0, proto0;
-      	  u8 error1, good_udp1, proto1;
+	  vlib_buffer_t *b0, *b1;
+	  udp_header_t *udp0, *udp1;
+	  u32 bi0, ip_len0, udp_len0, flags0, next0;
+	  u32 bi1, ip_len1, udp_len1, flags1, next1;
+	  i32 len_diff0, len_diff1;
+	  u8 error0, good_udp0, proto0;
+	  u8 error1, good_udp1, proto1;
 
 	  /* Prefetch next iteration. */
 	  {
@@ -1559,9 +1557,7 @@ ip_gtpu_bypass_inline (vlib_main_t * vm,
 
       while (n_left_from > 0 && n_left_to_next > 0)
 	{
-	  vlib_buffer_t * b0;
-	  ip4_header_t * ip40;
-	  ip6_header_t * ip60;
+	  vlib_buffer_t *b0;
 	  udp_header_t * udp0;
       	  u32 bi0, ip_len0, udp_len0, flags0, next0;
 	  i32 len_diff0;
@@ -1796,8 +1792,8 @@ gtpu_validate_udp_csum (vlib_main_t * vm, vlib_buffer_t *b)
 static_always_inline u8
 gtpu_check_ip (vlib_buffer_t *b, u16 payload_len)
 {
-  ip4_header_t * ip4_hdr = vlib_buffer_get_current(b) - 
-      sizeof(ip4_header_t) - sizeof(udp_header_t);
+  ip4_header_t *ip4_hdr = vlib_buffer_get_current (b) - sizeof (ip4_header_t) -
+			  sizeof (udp_header_t);
   u16 ip_len = clib_net_to_host_u16 (ip4_hdr->length);
   u16 expected = payload_len + sizeof(ip4_header_t) + sizeof(udp_header_t);
   return ip_len > expected || ip4_hdr->ttl == 0 || ip4_hdr->ip_version_and_header_length != 0x45;
@@ -1806,8 +1802,8 @@ gtpu_check_ip (vlib_buffer_t *b, u16 payload_len)
 static_always_inline u8
 gtpu_check_ip_udp_len (vlib_buffer_t *b)
 {
-  ip4_header_t * ip4_hdr = vlib_buffer_get_current(b) - 
-      sizeof(ip4_header_t) - sizeof(udp_header_t);
+  ip4_header_t *ip4_hdr = vlib_buffer_get_current (b) - sizeof (ip4_header_t) -
+			  sizeof (udp_header_t);
   udp_header_t * udp_hdr = vlib_buffer_get_current(b) - sizeof(udp_header_t);
   u16 ip_len = clib_net_to_host_u16 (ip4_hdr->length);
   u16 udp_len = clib_net_to_host_u16 (udp_hdr->length);

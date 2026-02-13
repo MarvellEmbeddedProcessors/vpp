@@ -63,7 +63,7 @@ static lookup_dpo_t *
 lookup_dpo_alloc (void)
 {
     lookup_dpo_t *lkd;
-    vlib_main_t *vm;
+    vlib_main_t *vm = NULL;
     u8 did_barrier_sync;
 
     dpo_pool_barrier_sync (vm, lookup_dpo_pool, did_barrier_sync);

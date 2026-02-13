@@ -26,7 +26,7 @@ static classify_dpo_t *
 classify_dpo_alloc (void)
 {
     classify_dpo_t *cd;
-    vlib_main_t *vm;
+    vlib_main_t *vm = NULL;
     u8 did_barrier_sync;
 
     dpo_pool_barrier_sync (vm, classify_dpo_pool, did_barrier_sync);
