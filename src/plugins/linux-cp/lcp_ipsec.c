@@ -1626,8 +1626,19 @@ uword
 ipsec_xfrm_expire_process (vlib_main_t *vm, vlib_node_runtime_t *node,
 			   vlib_frame_t *frame)
 {
-  /* init will wake it up */
-  vlib_process_wait_for_event (vm);
+  uword event_type = 0;
+
+  while (1)
+    {
+      vlib_process_wait_for_event (vm);
+      event_type = vlib_process_get_events (vm, 0);
+      if (event_type == XFRM_EXP_PRO_START_EVENT)
+	break;
+      else
+	{
+	  clib_warning ("Unknown event type %d", event_type);
+	}
+    }
 
   while (1)
     {

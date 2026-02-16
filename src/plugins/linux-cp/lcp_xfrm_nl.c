@@ -651,6 +651,16 @@ lcp_xfrm_nl_open_socket (void)
 }
 
 clib_error_t *
+lcp_nl_xfrm_main_loop_enter (vlib_main_t *vm)
+{
+  vlib_process_signal_event (vm, ipsec_xfrm_expire_process_node.index,
+			     XFRM_EXP_PRO_START_EVENT, 0);
+  return NULL;
+}
+
+VLIB_MAIN_LOOP_ENTER_FUNCTION (lcp_nl_xfrm_main_loop_enter);
+
+clib_error_t *
 lcp_nl_xfrm_init (vlib_main_t *vm)
 {
 
@@ -659,8 +669,6 @@ lcp_nl_xfrm_init (vlib_main_t *vm)
   nm->nl_logger = vlib_log_register_class ("nl", "xfrm");
 
   lcp_xfrm_nl_open_socket ();
-  vlib_process_signal_event (vlib_get_main (),
-			     ipsec_xfrm_expire_process_node.index, 0, 0);
   return NULL;
 }
 

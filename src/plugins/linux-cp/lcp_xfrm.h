@@ -44,6 +44,8 @@
 #include <vnet/fib/ip6_fib.h>
 #include <vnet/fib/mpls_fib.h>
 
+#define XFRM_EXP_PRO_START_EVENT 1
+
 #define NL_RT_COMMON		     uword is_mp_safe
 #define NL_RX_BUF_SIZE_DEF	     (1 << 28) /* 256 MB */
 #define NL_TX_BUF_SIZE_DEF	     (1 << 20) /* 1 MB */
