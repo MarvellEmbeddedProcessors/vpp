@@ -19,6 +19,7 @@
 #include <assert.h>
 #include <vnet/plugin/plugin.h>
 
+#define OCT_CP_PRO_START_EVENT 1
 /* Control plane version */
 #define CP_VERSION_MAJOR   1
 #define CP_VERSION_MINOR   0
@@ -130,9 +131,20 @@ octep_cp_process (vlib_main_t *vm, vlib_node_runtime_t *node,
   struct pem_cfg *pem;
   struct pf_cfg *pf;
   const char *soc_cfg = SOC_CFG_PATH;
+  uword event_type = 0;
 
   /* init will wake it up */
-  vlib_process_wait_for_event (vm);
+  while (1)
+    {
+      vlib_process_wait_for_event (vm);
+      event_type = vlib_process_get_events (vm, 0);
+      if (event_type == OCT_CP_PRO_START_EVENT)
+	break;
+      else
+	{
+	  clib_warning ("Unknown event type %d", event_type);
+	}
+    }
 
   err = octep_cp_config_init (soc_cfg);
   if (err)
@@ -212,11 +224,20 @@ VLIB_REGISTER_NODE (octep_cp_process_node, static) = {
 };
 
 clib_error_t *
+octep_cp_main_loop_enter (vlib_main_t *vm)
+{
+
+  vlib_process_signal_event (vm, octep_cp_process_node.index,
+			     OCT_CP_PRO_START_EVENT, 0);
+  return NULL;
+}
+
+VLIB_MAIN_LOOP_ENTER_FUNCTION (octep_cp_main_loop_enter);
+
+clib_error_t *
 octep_cp_init (vlib_main_t *vm)
 {
 
-  vlib_process_signal_event (vlib_get_main (), octep_cp_process_node.index, 0,
-			     0);
   return NULL;
 }
 

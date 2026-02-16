@@ -32,9 +32,12 @@ OCTEON connected to host.
      plugins {
          plugin octep_cp_plugin.so { enable }
      }
-	 - Add SDP VF device under `onp` section
-     onp {
-         dev 0002:1f:00.1
+	 - Add SDP VF device under `devices` section
+     devices {
+         dev pci/0002:1f:00.1
+         {
+           driver octeon
+         }
      }
 5. Determine SDP interface on HOST side
    - lspci | grep Cavium
