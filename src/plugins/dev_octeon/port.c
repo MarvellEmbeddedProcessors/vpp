@@ -506,6 +506,43 @@ oct_rxq_stop (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq)
 void
 oct_txq_stop (vlib_main_t *vm, vnet_dev_tx_queue_t *txq)
 {
+  vnet_dev_t *dev = txq->port->dev;
+  oct_txq_t *ctq = vnet_dev_get_tx_queue_data (txq);
+  oct_npa_batch_alloc_cl128_t *cl;
+  u32 n, off = ctq->hdr_off;
+
+  if (ctq->ba_num_cl > 0)
+    for (n = ctq->ba_num_cl, cl = ctq->ba_buffer + ctq->ba_first_cl; n;
+	 cl++, n--)
+      {
+	oct_npa_batch_alloc_status_t st;
+
+	st.as_u64 = __atomic_load_n (cl->iova, __ATOMIC_ACQUIRE);
+	if (st.status.ccode != ALLOC_CCODE_INVAL)
+	  for (u32 i = 0; i < st.status.count; i++)
+	    {
+#if (CLIB_DEBUG > 0)
+	      if (!i || (i == 8))
+		cl->iova[i] &= OCT_BATCH_ALLOC_IOVA0_MASK;
+#endif
+	      vlib_buffer_t *b = (vlib_buffer_t *) (cl->iova[i] + off);
+	      u32 bi = vlib_get_buffer_index (vm, b);
+	      vlib_buffer_free_no_next (vm, &bi, 1);
+	      ctq->n_enq--;
+	    }
+      }
+
+  n = oct_aura_free_all_buffers (vm, ctq->aura_handle, off, 0);
+  ctq->n_enq -= n;
+
+  if (ctq->n_enq > 0)
+    log_err (dev, "%u buffers leaked on tx queue %u stop", ctq->n_enq,
+	     txq->queue_id);
+  else
+    log_debug (dev, "%u buffers freed from tx queue %u", n, txq->queue_id);
+
+  ctq->n_enq = 0;
+  ctq->ba_num_cl = ctq->ba_first_cl = 0;
 }
 
 vnet_dev_rv_t
