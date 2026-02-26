@@ -282,7 +282,8 @@ api_tm_sys_node_shaper_update (vat_main_t *vam)
   unformat_input_t *i = vam->input;
   vl_api_tm_sys_node_shaper_update_t *mp;
   u32 msg_size = sizeof (*mp);
-  u32 shaper_profile = 0, node_id = 0;
+  i32 shaper_profile = 0;
+  u32 node_id = 0;
   u32 sw_if_idx = 0;
   int ret;
 
@@ -310,7 +311,7 @@ api_tm_sys_node_shaper_update (vat_main_t *vam)
   M (TM_SYS_NODE_SHAPER_UPDATE, mp);
 
   mp->sw_if_idx = clib_host_to_net_u32 (sw_if_idx);
-  mp->shaper_id = clib_host_to_net_u32 (shaper_profile);
+  mp->shaper_id = clib_host_to_net_i32 (shaper_profile);
   mp->node_id = clib_host_to_net_u32 (node_id);
 
   S (mp);
@@ -326,7 +327,7 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
   u32 msg_size = sizeof (*mp);
   u8 sw_if_idx_set = 0, shaper_id_set = 0;
   u32 sw_if_idx = 0;
-  u32 shaper_id = 0;
+  i32 shaper_id = 0;
   int ret;
 
   vam->result_ready = 0;
@@ -336,7 +337,7 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
     {
       if (unformat (i, "sw_if_idx %u", &sw_if_idx))
 	sw_if_idx_set = 1;
-      else if (unformat (i, "shaper_id %u", &shaper_id))
+      else if (unformat (i, "shaper_id %d", &shaper_id))
 	shaper_id_set = 1;
       else
 	{
@@ -351,7 +352,7 @@ api_tm_sys_shaper_profile_delete (vat_main_t *vam)
   M (TM_SYS_SHAPER_PROFILE_DELETE, mp);
 
   mp->sw_if_idx = clib_host_to_net_u32 (sw_if_idx);
-  mp->shaper_id = clib_host_to_net_u32 (shaper_id);
+  mp->shaper_id = clib_host_to_net_i32 (shaper_id);
 
   S (mp);
   W (ret);
@@ -641,7 +642,7 @@ vl_api_tm_sys_node_shaper_update_reply_t_handler (
 {
   vat_main_t *vam = tm_test_main.vat_main;
   clib_warning ("TM node updated shaper id : %d\n",
-		clib_net_to_host_u32 (mp->shaper_id));
+		clib_net_to_host_i32 (mp->shaper_id));
 
   vam->result_ready = 1;
 }
@@ -651,8 +652,8 @@ vl_api_tm_sys_shaper_profile_delete_reply_t_handler (
   vl_api_tm_sys_shaper_profile_delete_reply_t *mp)
 {
   vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM shaper profile delete id : %u\n",
-		clib_net_to_host_u32 (mp->shaper_id));
+  clib_warning ("TM shaper profile delete id : %d\n",
+		clib_net_to_host_i32 (mp->shaper_id));
   vam->result_ready = 1;
 }
 

@@ -137,7 +137,7 @@ vl_api_tm_sys_node_shaper_update_t_handler (
 {
   vl_api_tm_sys_node_shaper_update_reply_t *rmp;
   vnet_main_t *vnm = vnet_get_main ();
-  u32 shaper_profile_id = 0;
+  i32 shaper_profile_id = 0;
   u32 node_id = 0;
   int rv = -1;
 
@@ -145,13 +145,13 @@ vl_api_tm_sys_node_shaper_update_t_handler (
     vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
 
   node_id = clib_net_to_host_u32 (mp->node_id);
-  shaper_profile_id = clib_net_to_host_u32 (mp->shaper_id);
+  shaper_profile_id = clib_net_to_host_i32 (mp->shaper_id);
 
   rv = tm_sys_node_shaper_update (sw->hw_if_index, node_id, shaper_profile_id);
 
   REPLY_MACRO2 (VL_API_TM_SYS_NODE_SHAPER_UPDATE_REPLY, ({
 		  if (!rv)
-		    rmp->shaper_id = clib_host_to_net_u32 (shaper_profile_id);
+		    rmp->shaper_id = clib_host_to_net_i32 (shaper_profile_id);
 		}));
 }
 
@@ -161,18 +161,18 @@ vl_api_tm_sys_shaper_profile_delete_t_handler (
 {
   vl_api_tm_sys_shaper_profile_delete_reply_t *rmp;
   vnet_main_t *vnm = vnet_get_main ();
-  u32 shaper_id = 0;
+  i32 shaper_id = 0;
   int rv = -1;
 
   vnet_sw_interface_t *sw =
     vnet_get_sup_sw_interface (vnm, clib_net_to_host_u32 (mp->sw_if_idx));
-  shaper_id = clib_net_to_host_u32 (mp->shaper_id);
+  shaper_id = clib_net_to_host_i32 (mp->shaper_id);
 
   rv = tm_sys_shaper_profile_delete (sw->hw_if_index, shaper_id);
 
   REPLY_MACRO2 (VL_API_TM_SYS_SHAPER_PROFILE_DELETE_REPLY, ({
 		  if (!rv)
-		    rmp->shaper_id = clib_host_to_net_u32 (shaper_id);
+		    rmp->shaper_id = clib_host_to_net_i32 (shaper_id);
 		}));
 }
 

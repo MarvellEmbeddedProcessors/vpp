@@ -204,7 +204,7 @@ define tm_sys_shaper_profile_create
 define tm_sys_node_shaper_update_reply
 {
   u32 context;
-  u32 shaper_id;
+  i32 shaper_id;
   i32 retval;
 };
 
@@ -224,7 +224,7 @@ define tm_sys_node_shaper_update
   u32 client_index;
   u32 context;
   u32 sw_if_idx;
-  u32 shaper_id;
+  i32 shaper_id;
   u32 node_id;
 };
 
@@ -241,7 +241,7 @@ define tm_sys_shaper_profile_delete_reply
 {
   u32 context;
   i32 retval;
-  u32 shaper_id;
+  i32 shaper_id;
 };
 
 /**
@@ -259,7 +259,7 @@ define tm_sys_shaper_profile_delete
   u32 client_index;
   u32 context;
   u32 sw_if_idx;
-  u32 shaper_id;
+  i32 shaper_id;
 };
 
 /**

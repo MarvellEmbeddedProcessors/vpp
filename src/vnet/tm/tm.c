@@ -94,7 +94,7 @@ tm_sys_shaper_profile_create (u32 hw_if_idx, tm_shaper_params_t *param)
 }
 
 int
-tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, u32 shaper_id)
+tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, i32 shaper_id)
 {
   vnet_main_t *vnm = vnet_get_main ();
 
@@ -108,7 +108,7 @@ tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, u32 shaper_id)
 }
 
 int
-tm_sys_shaper_profile_delete (u32 hw_if_idx, u32 shaper_id)
+tm_sys_shaper_profile_delete (u32 hw_if_idx, i32 shaper_id)
 {
   vnet_main_t *vnm = vnet_get_main ();
 

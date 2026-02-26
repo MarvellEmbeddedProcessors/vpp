@@ -249,7 +249,7 @@ oct_tm_sys_shaper_profile_create (u32 hw_if_idx, tm_shaper_params_t *params)
 }
 
 int
-oct_tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, u32 profile_id)
+oct_tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, i32 profile_id)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -262,7 +262,7 @@ oct_tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, u32 profile_id)
   struct roc_nix_tm_node *node;
   int rc;
 
-  rc = roc_nix_tm_node_shaper_update (nix, node_id, profile_id, false);
+  rc = roc_nix_tm_node_shaper_update (nix, node_id, (u32) profile_id, false);
   if (rc)
     {
       return oct_roc_err (dev, rc, "oct_nix_tm_node_shaper_update_failed");
@@ -276,13 +276,13 @@ oct_tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id, u32 profile_id)
 			  "oct_nix_tm_node_shaper_update_node_failure");
     }
 
-  profile = roc_nix_tm_shaper_profile_get (nix, profile_id);
+  profile = roc_nix_tm_shaper_profile_get (nix, (u32) profile_id);
   roc_nix_tm_shaper_default_red_algo (node, profile);
 
   return 0;
 }
 int
-oct_tm_sys_shaper_profile_delete (u32 hw_if_idx, u32 shaper_id)
+oct_tm_sys_shaper_profile_delete (u32 hw_if_idx, i32 shaper_id)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -293,7 +293,7 @@ oct_tm_sys_shaper_profile_delete (u32 hw_if_idx, u32 shaper_id)
   struct roc_nix *nix = cd->nix;
   int rc;
 
-  rc = roc_nix_tm_shaper_profile_delete (nix, shaper_id);
+  rc = roc_nix_tm_shaper_profile_delete (nix, (u32) shaper_id);
   if (rc)
     {
       return oct_roc_err (dev, rc, "roc_nix_tm_shaper_delete_failed");
