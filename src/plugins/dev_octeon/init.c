@@ -24,6 +24,9 @@ extern oct_crypto_main_t oct_crypto_main;
 extern oct_inl_dev_main_t oct_inl_dev_main;
 extern oct_plt_init_param_t oct_plt_init_param;
 
+#define OCT_MAX_RX_QUEUES 1024
+#define OCT_MAX_TX_QUEUES 2048
+
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
   .class_name = "octeon",
   .subclass_name = "init",
@@ -364,8 +367,8 @@ oct_init_nix (vlib_main_t *vm, vnet_dev_t *dev)
     .port = {
       .attr = {
         .type = VNET_DEV_PORT_TYPE_ETHERNET,
-        .max_rx_queues = 64,
-        .max_tx_queues = 64,
+        .max_rx_queues = OCT_MAX_RX_QUEUES,
+        .max_tx_queues = OCT_MAX_TX_QUEUES,
         .max_supported_rx_frame_size = roc_nix_max_pkt_len (cd->nix),
 	.caps = {
 	  .rss = 1,
