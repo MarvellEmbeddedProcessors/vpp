@@ -21,10 +21,6 @@ endif()
 
 include_directories (${OCTEON_ROC_DIR}/)
 
-if (VPP_PLATFORM_NAME STREQUAL "octeon9")
-   add_compile_definitions(PLATFORM_OCTEON9)
-endif()
-
 add_vpp_plugin(dev_octeon
   SOURCES
   init.c

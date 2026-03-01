@@ -2435,6 +2435,15 @@ session_config_fn (vlib_main_t * vm, unformat_input_t * input)
 	return clib_error_return (0, "unknown input `%U'",
 				  format_unformat_error, input);
     }
+#if defined(PLATFORM_OCTEON9) || defined(PLATFORM_OCTEON10) ||                \
+  defined(PLATFORM_OCTEON20)
+  if (smm->dma_enabled)
+    {
+      clib_warning (
+	"dma is not yet supported with session on OCTEON, ignored");
+      smm->dma_enabled = 0;
+    }
+#endif
   return 0;
 }
 
