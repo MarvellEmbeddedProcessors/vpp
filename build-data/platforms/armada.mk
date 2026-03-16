@@ -19,6 +19,8 @@ _CURDIR                        := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 VPP_EXTRA_CMAKE_ARGS           +=-DCMAKE_TOOLCHAIN_FILE=$(_CURDIR)/../../src/cmake/cross.cmake
 VPP_EXTRA_CMAKE_ARGS           +=-DCMAKE_C_FLAGS="${armada_c_flags}"
 
+VPP_EXTRA_CMAKE_ARGS           +=-DVPP_PLATFORM=cn913x
+
 ifeq ("$(ARMADA_DISABLE_CCACHE)","1")
 VPP_EXTRA_CMAKE_ARGS           += -DVPP_USE_CCACHE:BOOL=OFF
 endif
