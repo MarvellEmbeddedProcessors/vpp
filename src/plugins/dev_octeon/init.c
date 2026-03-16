@@ -886,9 +886,12 @@ oct_plugin_init (vlib_main_t *vm)
 #ifdef PLATFORM_OCTEON9
   if (!roc_model_is_cn9k ())
     return clib_error_return (0, "OCTEON model is not OCTEON9");
-#else
+#elif PLATFORM_OCTEON10
   if (!roc_model_is_cn10k ())
     return clib_error_return (0, "OCTEON model is not OCTEON10");
+#else
+  if (!roc_model_is_cn20k ())
+    return clib_error_return (0, "OCTEON model is not OCTEON20");
 #endif
 
   roc_npa_lf_init_cb_register (oct_npa_max_pools_set_cb);
