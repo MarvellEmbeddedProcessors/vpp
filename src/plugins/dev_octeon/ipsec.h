@@ -7,6 +7,11 @@
 #ifndef _OCTEON_IPSEC_H_
 #define _OCTEON_IPSEC_H_
 
+#include <vnet/buffer.h>
+
+#define OCT_IPSEC_CPT_RES_ALIGN	     16
+#define OCT_IPSEC_CPT_RES_ALIGN_MASK (OCT_IPSEC_CPT_RES_ALIGN - 1)
+
 #define OCT_EVENT_TYPE_FRM_INL_DEV 0x0
 #define OCT_EVENT_TYPE_FRM_CPU	   0x1
 
@@ -80,14 +85,21 @@ typedef struct
 
 typedef struct
 {
-  union cpt_res_s res;
   u16 dlen_adj;
   u16 sa_bytes;
+  union cpt_res_s res;
 } __clib_packed oct_ipsec_outb_data_t;
 
 STATIC_ASSERT (sizeof (oct_ipsec_outb_data_t) <=
 		 STRUCT_SIZE_OF (vnet_buffer_opaque2_t, unused),
 	       "Outbound meta-data too large for vnet_buffer_opaque2_t");
+
+STATIC_ASSERT (
+  ((STRUCT_OFFSET_OF (vlib_buffer_t, opaque2) +
+    STRUCT_OFFSET_OF (vnet_buffer_opaque2_t, unused) +
+    STRUCT_OFFSET_OF (oct_ipsec_outb_data_t, res)) &
+   OCT_IPSEC_CPT_RES_ALIGN_MASK) == 0,
+  "oct_ipsec_outb_data_t.res must be 16-byte aligned for CPT DMA");
 
 #define oct_ipsec_outb_data(b)                                                \
   ((oct_ipsec_outb_data_t *) ((u8 *) (b)->opaque2 +                           \
