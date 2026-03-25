@@ -158,7 +158,8 @@ function run_inline_ipsec()
 	vpp_start inl_ipsec
 
 	sleep 2
-	run_test 2
+	# Arg != 1/2/3 bypasses all skip filters, running every case
+	run_test 4
 }
 
 #configure vm0
@@ -271,8 +272,32 @@ trap "sig_handler EXIT" EXIT
 # script's starting point
 CASE=(
 	""
-	"enc    cbc(aes)        0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0      auth    sha1    0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
-	"enc    cbc(aes)        0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0      auth-trunc    sha256  0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 128"
+	# 1: AES-CBC-128 / SHA1-96
+	"enc cbc(aes) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+	# 2: AES-CBC-128 / SHA-256-128
+	"enc cbc(aes) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth-trunc sha256 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 128"
+	# 3: AES-CBC-192 / SHA1-96
+	"enc cbc(aes) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+	# 4: AES-CBC-256 / SHA1-96
+	"enc cbc(aes) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+	# 5: AES-GCM-128 (AEAD) - ip xfrm key = cipher_key + 4-byte salt
+	"aead rfc4106(gcm(aes)) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000000000 128"
+	# 6: AES-GCM-192 (AEAD) - 24-byte key + 4-byte salt
+	"aead rfc4106(gcm(aes)) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000000000 128"
+	# 7: AES-GCM-256 (AEAD) - 32-byte key + 4-byte salt
+	"aead rfc4106(gcm(aes)) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000000000 128"
+	# 8: AES-CTR-128 / SHA1-96 - 16-byte key + 4-byte nonce
+	"enc rfc3686(ctr(aes)) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000000000 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+	# 9: AES-CTR-192 / SHA1-96 - 24-byte key + 4-byte nonce
+	"enc rfc3686(ctr(aes)) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000000000 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+	# 10: AES-CTR-256 / SHA1-96 - 32-byte key + 4-byte nonce
+	"enc rfc3686(ctr(aes)) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000000000 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+	# 11: AES-CBC-128 / SHA-384-192 (must use full name hmac(sha384) for ip xfrm)
+	"enc cbc(aes) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth-trunc hmac(sha384) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 192"
+	# 12: AES-CBC-128 / SHA-512-256 (must use full name hmac(sha512) for ip xfrm)
+	"enc cbc(aes) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth-trunc hmac(sha512) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 256"
+	# 13: 3DES-CBC / SHA1-96
+	"enc cbc(des3_ede) 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 auth sha1 0xa0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
 )
 
 PING_RETRY=1
@@ -320,8 +345,7 @@ fi
 
 rm -f $APP_LOG $APP_FULL_LOG $APP_RESULT $PING_LOG
 
-MAX_X=110
-MAX_Y=2
+MAX_Y=13
 
 main
 exit 0

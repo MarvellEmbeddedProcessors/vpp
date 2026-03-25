@@ -6,18 +6,136 @@ set int ip address eth1 192.168.1.1/24
 set int mac address eth1 00:16:3e:22:a1:d9
 set int state eth1 up
 
+set int ip address eth1 192.168.2.1/24
+set int ip address eth1 192.168.3.1/24
+set int ip address eth1 192.168.4.1/24
+set int ip address eth1 192.168.5.1/24
+set int ip address eth1 192.168.6.1/24
+set int ip address eth1 192.168.7.1/24
+set int ip address eth1 192.168.8.1/24
+set int ip address eth1 192.168.9.1/24
+set int ip address eth1 192.168.10.1/24
+set int ip address eth1 192.168.11.1/24
+set int ip address eth1 192.168.12.1/24
+set int ip address eth1 192.168.13.1/24
+
 set ipsec async mode on
 
 ipsec sa add 1 spi 1 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.1.1 dst 1.1.1.2 inbound
 ipsec sa add 11 spi 101 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.1.2 dst 1.1.1.1
-
 ipsec itf create
 ipsec tunnel protect sa-out 11 sa-in 1 ipsec0
 set int state ipsec0 up
-
 ip route add 192.168.101.0/24 via ipsec0
 set ip neighbor eth0 1.1.1.1 00:16:3e:7e:94:9a
-
 ip route add 1.1.1.0/24 via eth0
-ip route add 192.168.1.0/24 via eth1
 
+ipsec sa add 2 spi 2 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha-256-128 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.2.1 dst 1.1.2.2 inbound
+ipsec sa add 12 spi 102 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha-256-128 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.2.2 dst 1.1.2.1
+ipsec itf create
+ipsec tunnel protect sa-out 12 sa-in 2 ipsec1
+set int state ipsec1 up
+ip route add 192.168.102.0/24 via ipsec1
+set ip neighbor eth0 1.1.2.1 00:16:3e:7e:94:9a
+ip route add 1.1.2.0/24 via eth0
+
+ipsec sa add 3 spi 3 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-192 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.3.1 dst 1.1.3.2 inbound
+ipsec sa add 13 spi 103 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-192 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.3.2 dst 1.1.3.1
+ipsec itf create
+ipsec tunnel protect sa-out 13 sa-in 3 ipsec2
+set int state ipsec2 up
+ip route add 192.168.103.0/24 via ipsec2
+set ip neighbor eth0 1.1.3.1 00:16:3e:7e:94:9a
+ip route add 1.1.3.0/24 via eth0
+
+ipsec sa add 4 spi 4 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-256 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.4.1 dst 1.1.4.2 inbound
+ipsec sa add 14 spi 104 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-256 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.4.2 dst 1.1.4.1
+ipsec itf create
+ipsec tunnel protect sa-out 14 sa-in 4 ipsec3
+set int state ipsec3 up
+ip route add 192.168.104.0/24 via ipsec3
+set ip neighbor eth0 1.1.4.1 00:16:3e:7e:94:9a
+ip route add 1.1.4.0/24 via eth0
+
+ipsec sa add 5 spi 5 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 salt 0x0 tunnel src 1.1.5.1 dst 1.1.5.2 inbound
+ipsec sa add 15 spi 105 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-128 salt 0x0 tunnel src 1.1.5.2 dst 1.1.5.1
+ipsec itf create
+ipsec tunnel protect sa-out 15 sa-in 5 ipsec4
+set int state ipsec4 up
+ip route add 192.168.105.0/24 via ipsec4
+set ip neighbor eth0 1.1.5.1 00:16:3e:7e:94:9a
+ip route add 1.1.5.0/24 via eth0
+
+ipsec sa add 6 spi 6 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-192 salt 0x0 tunnel src 1.1.6.1 dst 1.1.6.2 inbound
+ipsec sa add 16 spi 106 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-192 salt 0x0 tunnel src 1.1.6.2 dst 1.1.6.1
+ipsec itf create
+ipsec tunnel protect sa-out 16 sa-in 6 ipsec5
+set int state ipsec5 up
+ip route add 192.168.106.0/24 via ipsec5
+set ip neighbor eth0 1.1.6.1 00:16:3e:7e:94:9a
+ip route add 1.1.6.0/24 via eth0
+
+ipsec sa add 7 spi 7 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-256 salt 0x0 tunnel src 1.1.7.1 dst 1.1.7.2 inbound
+ipsec sa add 17 spi 107 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-gcm-256 salt 0x0 tunnel src 1.1.7.2 dst 1.1.7.1
+ipsec itf create
+ipsec tunnel protect sa-out 17 sa-in 7 ipsec6
+set int state ipsec6 up
+ip route add 192.168.107.0/24 via ipsec6
+set ip neighbor eth0 1.1.7.1 00:16:3e:7e:94:9a
+ip route add 1.1.7.0/24 via eth0
+
+ipsec sa add 8 spi 8 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-ctr-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 salt 0x0 tunnel src 1.1.8.1 dst 1.1.8.2 inbound
+ipsec sa add 18 spi 108 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-ctr-128 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 salt 0x0 tunnel src 1.1.8.2 dst 1.1.8.1
+ipsec itf create
+ipsec tunnel protect sa-out 18 sa-in 8 ipsec7
+set int state ipsec7 up
+ip route add 192.168.108.0/24 via ipsec7
+set ip neighbor eth0 1.1.8.1 00:16:3e:7e:94:9a
+ip route add 1.1.8.0/24 via eth0
+
+ipsec sa add 9 spi 9 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-ctr-192 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 salt 0x0 tunnel src 1.1.9.1 dst 1.1.9.2 inbound
+ipsec sa add 19 spi 109 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-ctr-192 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 salt 0x0 tunnel src 1.1.9.2 dst 1.1.9.1
+ipsec itf create
+ipsec tunnel protect sa-out 19 sa-in 9 ipsec8
+set int state ipsec8 up
+ip route add 192.168.109.0/24 via ipsec8
+set ip neighbor eth0 1.1.9.1 00:16:3e:7e:94:9a
+ip route add 1.1.9.0/24 via eth0
+
+ipsec sa add 10 spi 10 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-ctr-256 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 salt 0x0 tunnel src 1.1.10.1 dst 1.1.10.2 inbound
+ipsec sa add 20 spi 110 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-ctr-256 integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 salt 0x0 tunnel src 1.1.10.2 dst 1.1.10.1
+ipsec itf create
+ipsec tunnel protect sa-out 20 sa-in 10 ipsec9
+set int state ipsec9 up
+ip route add 192.168.110.0/24 via ipsec9
+set ip neighbor eth0 1.1.10.1 00:16:3e:7e:94:9a
+ip route add 1.1.10.0/24 via eth0
+
+ipsec sa add 21 spi 11 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha-384-192 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.11.1 dst 1.1.11.2 inbound
+ipsec sa add 31 spi 111 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha-384-192 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.11.2 dst 1.1.11.1
+ipsec itf create
+ipsec tunnel protect sa-out 31 sa-in 21 ipsec10
+set int state ipsec10 up
+ip route add 192.168.111.0/24 via ipsec10
+set ip neighbor eth0 1.1.11.1 00:16:3e:7e:94:9a
+ip route add 1.1.11.0/24 via eth0
+
+ipsec sa add 22 spi 12 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha-512-256 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.12.1 dst 1.1.12.2 inbound
+ipsec sa add 32 spi 112 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg aes-cbc-128 integ-alg sha-512-256 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.12.2 dst 1.1.12.1
+ipsec itf create
+ipsec tunnel protect sa-out 32 sa-in 22 ipsec11
+set int state ipsec11 up
+ip route add 192.168.112.0/24 via ipsec11
+set ip neighbor eth0 1.1.12.1 00:16:3e:7e:94:9a
+ip route add 1.1.12.0/24 via eth0
+
+ipsec sa add 23 spi 13 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg 3des-cbc integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.13.1 dst 1.1.13.2 inbound
+ipsec sa add 33 spi 113 esp crypto-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 crypto-alg 3des-cbc integ-alg sha1-96 integ-key a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0 tunnel src 1.1.13.2 dst 1.1.13.1
+ipsec itf create
+ipsec tunnel protect sa-out 33 sa-in 23 ipsec12
+set int state ipsec12 up
+ip route add 192.168.113.0/24 via ipsec12
+set ip neighbor eth0 1.1.13.1 00:16:3e:7e:94:9a
+ip route add 1.1.13.0/24 via eth0
+
+ip route add 192.168.1.0/24 via eth1
