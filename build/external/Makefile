@@ -22,6 +22,7 @@ ifneq ($(shell uname), FreeBSD)
 include packages/rdma-core.mk
 include packages/xdp-tools.mk
 include packages/octeon-roc.mk
+include packages/octeon-dao.mk
 endif	# ! FreeBSD
 include packages/dpdk.mk
 
@@ -33,7 +34,7 @@ clean:
 ifeq ($(shell uname), FreeBSD)
 install: $(if $(ARCH_X86_64), ipsec-mb-install) dpdk-install quicly-install
 else
-install: $(if $(ARCH_X86_64), ipsec-mb-install) dpdk-install rdma-core-install quicly-install xdp-tools-install $(if $(AARCH64), octeon-roc-install)
+install: $(if $(ARCH_X86_64), ipsec-mb-install) dpdk-install rdma-core-install quicly-install xdp-tools-install $(if $(AARCH64), octeon-roc-install octeon-dao-install)
 endif	# FreeBSD
 
 .PHONY: config

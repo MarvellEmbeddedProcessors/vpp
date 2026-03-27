@@ -19,7 +19,13 @@ if (NOT OCTEON_ROC_LIB)
   return ()
 endif()
 
+if (NOT OCTEON_ROC_DIR OR NOT OCTEON_ROC_LIB)
+  include (dev_octeon_virtio.mk)
+  return ()
+endif()
+
 include_directories (${OCTEON_ROC_DIR}/)
+include_directories (${CMAKE_CURRENT_SOURCE_DIR}/dpu/)
 
 add_vpp_plugin(dev_octeon
   SOURCES
@@ -39,6 +45,7 @@ add_vpp_plugin(dev_octeon
   tm.c
   pfc.c
   dma.c
+  dpu/dpu.c
 
   MULTIARCH_SOURCES
   rx_node.c
@@ -48,3 +55,4 @@ add_vpp_plugin(dev_octeon
   ${OCTEON_ROC_LIB}
 )
 
+include (dev_octeon_virtio.mk)
