@@ -343,7 +343,7 @@ oct_aura_available_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	}
     }
 
-  if (oct_dma_main.dmadevs[0]->aura_handle)
+  if (oct_dma_main.n_dmadev && oct_dma_main.dmadevs[0]->aura_handle)
     vlib_cli_output (
       vm, "dma cmd queue aura 0x%llx avl_count %llu\n\n",
       oct_dma_main.dmadevs[0]->aura_handle,
