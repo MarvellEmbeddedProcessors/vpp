@@ -1432,6 +1432,11 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
       inst2.res_addr = (u64) &oct_ipsec_outb_data (b[2])->res;
       inst3.res_addr = (u64) &oct_ipsec_outb_data (b[3])->res;
 
+      inst0.cq_ena = cd->cpt_cq_ena;
+      inst1.cq_ena = cd->cpt_cq_ena;
+      inst2.cq_ena = cd->cpt_cq_ena;
+      inst3.cq_ena = cd->cpt_cq_ena;
+
       inst0.w2.u64 = sess0->inst.w2.u64;
       inst1.w2.u64 = sess1->inst.w2.u64;
       inst2.w2.u64 = sess2->inst.w2.u64;
@@ -1627,6 +1632,7 @@ oct_pkts_send_ipsec (vlib_main_t *vm, vlib_node_runtime_t *node,
 
       oct_ipsec_outb_data (b[0])->res.cn10k.compcode = CPT_COMP_NOT_DONE;
       inst0.res_addr = (u64) &oct_ipsec_outb_data (b[0])->res;
+      inst0.cq_ena = cd->cpt_cq_ena;
       inst0.w2.u64 = sess0->inst.w2.u64;
       inst0.w3.u64 = (uintptr_t) (b[0]);
       inst0.w3.u64 |= 0x1ULL;

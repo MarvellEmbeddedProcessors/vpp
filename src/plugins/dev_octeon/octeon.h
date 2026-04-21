@@ -54,6 +54,7 @@ typedef enum
 typedef enum
 {
   OCT_DEV_ARG_CRYPTO_N_DESC = 1,
+  OCT_DEV_ARG_CPT_CQ_ENABLE,
   OCT_DEV_ARG_END,
 } oct_dev_args_t;
 
@@ -168,6 +169,7 @@ typedef struct
 
   u32 cached_cpt_pkts;
   u64 cpt_io_addr;
+  u8 cpt_cq_ena;
   oct_txq_t **ctqs;
 
   struct oct_outb_sa_data outb;

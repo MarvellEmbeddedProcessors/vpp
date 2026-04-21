@@ -146,7 +146,6 @@ typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
   oct_ipsec_session_t *inline_ipsec_sessions;
-
 } oct_ipsec_main_t;
 
 typedef struct
@@ -164,6 +163,7 @@ typedef struct
   u32 inb_sa_sz;
   u32 inb_spi_mask;
   u8 is_inl_ipsec_flow_enabled;
+  u8 cpt_cq_enable;
   u32 in_min_spi;
   u32 in_max_spi;
   u32 out_max_sa;

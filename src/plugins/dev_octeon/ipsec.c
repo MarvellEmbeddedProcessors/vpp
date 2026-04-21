@@ -1505,8 +1505,67 @@ oct_ipsec_inl_dev_outb_cfg (vnet_dev_t *dev, oct_inl_dev_cfg_t *inl_dev_cfg)
   cd->outb.sa_base = roc_nix_inl_outb_sa_base_get (nix);
   cd->outb.sa_bmap_mem = mem;
   cd->outb.sa_bmap = bmap;
+  cd->cpt_cq_ena = roc_nix_inl_is_cq_ena (nix);
 
   return VNET_DEV_OK;
+}
+
+static_always_inline oct_ipsec_outb_sa_priv_data_t *
+oct_outb_sa_sw_rsvd (void *sa)
+{
+  if (roc_model_is_cn20k ())
+    return roc_nix_inl_ow_ipsec_outb_sa_sw_rsvd (sa);
+  return roc_nix_inl_ot_ipsec_outb_sa_sw_rsvd (sa);
+}
+
+static void
+oct_ipsec_cpt_cq_handle_outb (void *sa, struct cpt_cq_s *cqs)
+{
+  vlib_main_t *vm = vlib_get_main ();
+  oct_ipsec_outb_sa_priv_data_t *outb_priv;
+  u8 uc_cc = cqs->w0.s.uc_compcode;
+  u8 cc = cqs->w0.s.compcode;
+  vlib_buffer_t *b = NULL;
+  u8 fmt_msk = 0x3;
+
+  outb_priv = oct_outb_sa_sw_rsvd (sa);
+
+  switch (uc_cc)
+    {
+    case ROC_IE_OW_UCC_SUCCESS_SA_SOFTEXP_FIRST:
+      clib_warning ("SA soft-expired (first): sa_index %u", outb_priv->sa_idx);
+      return;
+      break;
+    case ROC_IE_OW_UCC_SUCCESS_SA_SOFTEXP_AGAIN:
+      clib_warning ("SA soft-expired (again): sa_index %u", outb_priv->sa_idx);
+      return;
+      break;
+    case ROC_IE_OW_UCC_ERR_SA_EXPIRED:
+      clib_warning ("SA hard-expired: sa_index %u", outb_priv->sa_idx);
+      break;
+    case ROC_IE_OW_UCC_ERR_SA_OVERFLOW:
+      clib_warning ("SA ESN overflow: sa_index %u", outb_priv->sa_idx);
+      break;
+    default:
+      clib_warning ("CPT outbound error: sa_index %u compcode=0x%x "
+		    "uc_compcode=0x%x",
+		    outb_priv->sa_idx, cc, uc_cc);
+      break;
+    }
+
+  switch (cqs->w2.s.fmt & fmt_msk)
+    {
+    case WQE_PTR_CPTR:
+    case WQE_PTR_ANTI_REPLAY:
+      b = (vlib_buffer_t *) (cqs->w3.comp_ptr << 3);
+      break;
+    case CPTR_WQE_PTR:
+      b = (vlib_buffer_t *) (cqs->w1.esn << 3);
+      break;
+    }
+  if (b)
+    vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
+  return;
 }
 
 void
@@ -1514,7 +1573,6 @@ oct_ipsec_sso_work_cb (uint64_t *gw, void *args, enum nix_inl_event_type type,
 		       void *cq_s, uint32_t port_id)
 {
   vlib_main_t *vm = vlib_get_main ();
-  struct roc_ot_ipsec_outb_sa *sa;
   oct_ipsec_outb_sa_priv_data_t *outb_priv;
   vlib_buffer_t *b;
   u32 bi;
@@ -1531,13 +1589,17 @@ oct_ipsec_sso_work_cb (uint64_t *gw, void *args, enum nix_inl_event_type type,
       /* Event from outbound inline error */
       b = (vlib_buffer_t *) gw[1];
       vlib_buffer_free_one (vm, vlib_get_buffer_index (vm, b));
-      break;
-      /* Fall through */
+      return;
     default:
-      if (type == NIX_INL_SOFT_EXPIRY_THRD)
+      /* Event from outbound CPT completion queue */
+      if (type == NIX_INL_OUTB_CPT_CQ)
 	{
-	  sa = (struct roc_ot_ipsec_outb_sa *) args;
-	  outb_priv = roc_nix_inl_ot_ipsec_outb_sa_sw_rsvd (sa);
+	  oct_ipsec_cpt_cq_handle_outb (args, (struct cpt_cq_s *) cq_s);
+	}
+      /* Event from soft expiry poll thread */
+      else if (type == NIX_INL_SOFT_EXPIRY_THRD)
+	{
+	  outb_priv = oct_outb_sa_sw_rsvd (args);
 	  clib_warning ("Soft expiry event received for sa_index %u",
 			outb_priv->sa_idx);
 	}
@@ -1548,8 +1610,6 @@ oct_ipsec_sso_work_cb (uint64_t *gw, void *args, enum nix_inl_event_type type,
 	}
       return;
     }
-
-  return;
 }
 
 static int
@@ -1577,6 +1637,15 @@ oct_early_init_inline_ipsec (vlib_main_t *vm, vnet_dev_t *dev)
     STRUCT_OFFSET_OF (vlib_buffer_t, pre_data) / ROC_ALIGN;
   inl_dev_main->inl_dev->nb_meta_bufs = bp->n_buffers;
   inl_dev_main->inl_dev->res_addr_offset = -1;
+  if (inl_dev_main->cpt_cq_enable)
+    {
+      if (roc_feature_nix_has_cpt_cq_support ())
+	inl_dev_main->inl_dev->cpt_cq_enable = 1;
+      else
+	log_warn (dev, "cpt_cq_enable requested but platform does not "
+		       "support CPT completion queue");
+    }
+
   if (roc_feature_nix_has_inl_multi_queue ())
     inl_dev_main->inl_dev->nb_inb_cptlfs = 1;
 

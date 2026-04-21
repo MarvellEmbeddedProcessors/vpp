@@ -199,6 +199,14 @@ static vnet_dev_arg_t oct_dev_args[] = {
     .default_val.uint32 = OCT_CPT_LF_DEF_NB_DESC,
   },
   {
+    .id = OCT_DEV_ARG_CPT_CQ_ENABLE,
+    .name = "cpt_cq_enable",
+    .desc = "Enable CPT CQ for inline IPsec errors. Applicable to inline "
+	    "devices only",
+    .type = VNET_DEV_ARG_TYPE_BOOL,
+    .default_val.boolean = false,
+  },
+  {
     .id = OCT_DEV_ARG_END,
     .name = "end",
     .desc = "Argument end",
@@ -555,6 +563,12 @@ oct_init_inl_dev (vlib_main_t *vm, vnet_dev_t *dev)
 		    "be minimum 128 Bytes and offset of pre_data in vlib "
 		    "should be 128 bytes aligned");
       return VNET_DEV_ERR_NOT_SUPPORTED;
+    }
+
+  foreach_vnet_dev_args (arg, dev)
+    {
+      if (arg->id == OCT_DEV_ARG_CPT_CQ_ENABLE)
+	oidm->cpt_cq_enable = vnet_dev_arg_get_bool (arg);
     }
 
   oidm->inl_dev = oct_plt_init_param.oct_plt_zmalloc (
