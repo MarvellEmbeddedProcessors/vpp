@@ -235,7 +235,7 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
       return oct_roc_err (dev, rrv, "roc_nix_tm_hierarchy_enable() failed");
     }
 
-  rrv = roc_nix_switch_hdr_set (nix, cp->npc.switch_header_type, 0, 0, 0);
+  rrv = roc_nix_switch_hdr_set (nix, cp->npc.switch_header_type, 0, 0, 0, 0);
   if (rrv)
     {
       oct_port_deinit (vm, port);
@@ -348,7 +348,7 @@ oct_port_deinit (vlib_main_t *vm, vnet_dev_port_t *port)
     oct_txq_deinit (vm, q);
 
   /* Disable switch hdr pkind */
-  roc_nix_switch_hdr_set (nix, 0, 0, 0, 0);
+  roc_nix_switch_hdr_set (nix, 0, 0, 0, 0, 0);
 
   if (cp->npc_initialized)
     {
