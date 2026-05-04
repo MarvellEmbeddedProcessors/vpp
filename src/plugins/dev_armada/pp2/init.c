@@ -227,40 +227,43 @@ mvpp2_init (vlib_main_t *vm, vnet_dev_t *dev)
 	clib_dt_node_t *ports;
 	sw = n;
 	log_debug (dev, "found mv88e6190 compatible switch at %v", n->path);
-	ports = clib_dt_get_child_node (sw, "ports");
-	foreach_clib_dt_child_node (pn, ports)
-	  {
-	    u32 reg = CLIB_U32_MAX;
-	    char *label = "(no label)";
-	    clib_dt_property_t *p;
-	    clib_dt_node_t *n;
+	ports = clib_dt_get_child_node (sw, "ethernet-ports");
+	if (!ports)
+	  ports = clib_dt_get_child_node (sw, "ports");
+	if (ports)
+	  foreach_clib_dt_child_node (pn, ports)
+	    {
+	      u32 reg = CLIB_U32_MAX;
+	      char *label = "(no label)";
+	      clib_dt_property_t *p;
+	      clib_dt_node_t *n;
 
-	    p = clib_dt_get_node_property_by_name (pn, "reg");
-	    if (p)
-	      reg = clib_dt_property_get_u32 (p);
-	    p = clib_dt_get_node_property_by_name (pn, "label");
-	    if (p)
-	      label = clib_dt_property_get_string (p);
+	      p = clib_dt_get_node_property_by_name (pn, "reg");
+	      if (p)
+		reg = clib_dt_property_get_u32 (p);
+	      p = clib_dt_get_node_property_by_name (pn, "label");
+	      if (p)
+		label = clib_dt_property_get_string (p);
 
-	    log_debug (dev, "port %u label %s", reg, label);
+	      log_debug (dev, "port %u label %s", reg, label);
 
-	    n = clib_dt_dereference_node (pn, "phy-handle");
-	    if (n)
-	      log_debug (dev, "  phy is %v", n->path);
+	      n = clib_dt_dereference_node (pn, "phy-handle");
+	      if (n)
+		log_debug (dev, "  phy is %v", n->path);
 
-	    n = clib_dt_dereference_node (pn, "sfp");
-	    if (n)
-	      log_debug (dev, "  sfp is %v", n->path);
+	      n = clib_dt_dereference_node (pn, "sfp");
+	      if (n)
+		log_debug (dev, "  sfp is %v", n->path);
 
-	    n = clib_dt_dereference_node (pn, "ethernet");
-	    if (n)
-	      log_debug (dev, "  connected to %v", n->path);
+	      n = clib_dt_dereference_node (pn, "ethernet");
+	      if (n)
+		log_debug (dev, "  connected to %v", n->path);
 
-	    p = clib_dt_get_node_property_by_name (pn, "phy-mode");
-	    if (p)
-	      log_debug (dev, "  phy mode is %s",
-			 clib_dt_property_get_string (p));
-	  }
+	      p = clib_dt_get_node_property_by_name (pn, "phy-mode");
+	      if (p)
+		log_debug (dev, "  phy mode is %s",
+			   clib_dt_property_get_string (p));
+	    }
       }
 
   if ((mvpp2_global_init (vm, dev)) != VNET_DEV_OK)
@@ -317,7 +320,10 @@ mvpp2_init (vlib_main_t *vm, vnet_dev_t *dev)
 
       if (sw)
 	{
-	  clib_dt_node_t *ports = clib_dt_get_child_node (sw, "ports");
+	  clib_dt_node_t *ports =
+	    clib_dt_get_child_node (sw, "ethernet-ports");
+	  if (!ports)
+	    ports = clib_dt_get_child_node (sw, "ports");
 	  if (ports)
 	    foreach_clib_dt_child_node (sp, ports)
 	      {
