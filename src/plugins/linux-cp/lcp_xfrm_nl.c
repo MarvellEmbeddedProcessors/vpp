@@ -530,7 +530,6 @@ static clib_error_t *
 lcp_xfrm_itf_pair_config (vlib_main_t *vm, unformat_input_t *input)
 {
   u32 buf_size, batch_size, batch_delay_ms;
-  char *tunnel_name = NULL;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -542,13 +541,10 @@ lcp_xfrm_itf_pair_config (vlib_main_t *vm, unformat_input_t *input)
 	lcp_xfrm_nl_set_batch_size (batch_size);
       else if (unformat (input, "nl-batch-delay-ms %u", &batch_delay_ms))
 	lcp_xfrm_nl_set_batch_delay (batch_delay_ms);
-      else if (unformat (input, "interface %s", tunnel_name))
-	{
-	  if (!clib_strcmp (tunnel_name, "ipsec"))
-	    nm->interface_type = NL_INTERFACE_TYPE_IPSEC;
-
-	  vec_free (tunnel_name);
-	}
+      else if (unformat (input, "interface ipsec"))
+	nm->interface_type = NL_INTERFACE_TYPE_IPSEC;
+      else if (unformat (input, "interface ipip"))
+	nm->interface_type = NL_INTERFACE_TYPE_IPIP;
       else
 	return clib_error_return (0, "invalid netlink option: %U",
 				  format_unformat_error, input);
