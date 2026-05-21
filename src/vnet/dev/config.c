@@ -204,6 +204,7 @@ uword
 dev_config_process_node_fn (vlib_main_t *vm, vlib_node_runtime_t *rt,
 			    vlib_frame_t *f)
 {
+  vlib_global_main_t *vgm = vlib_get_global_main ();
   vnet_dev_main_t *dm = &vnet_dev_main;
   vnet_dev_driver_name_t driver_name;
   unformat_input_t input;
@@ -254,6 +255,9 @@ dev_config_process_node_fn (vlib_main_t *vm, vlib_node_runtime_t *rt,
       clib_error_free (err);
     }
 
+  /* Release our reference after all device initialization is done */
+  vgm->dev_config_pending--;
+
   vlib_node_set_state (vm, rt->node_index, VLIB_NODE_STATE_DISABLED);
   vlib_node_rename (vm, rt->node_index, "deleted-%u", rt->node_index);
   vec_add1 (dm->free_process_node_indices, rt->node_index);
@@ -269,11 +273,16 @@ VLIB_REGISTER_NODE (dev_config_process_node) = {
 static clib_error_t *
 devices_config (vlib_main_t *vm, unformat_input_t *input)
 {
+  vlib_global_main_t *vgm = vlib_get_global_main ();
   vnet_dev_main_t *dm = &vnet_dev_main;
   uword c;
 
   while ((c = unformat_get_input (input)) != UNFORMAT_END_OF_INPUT)
     vec_add1 (dm->startup_config, c);
+
+  /* Take a reference before any process starts */
+  if (vec_len (dm->startup_config))
+    vgm->dev_config_pending++;
 
   return 0;
 }

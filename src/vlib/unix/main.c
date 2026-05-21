@@ -337,6 +337,7 @@ startup_config_process (vlib_main_t * vm,
 			vlib_node_runtime_t * rt, vlib_frame_t * f)
 {
   unix_main_t *um = &unix_main;
+  vlib_global_main_t *vgm = vlib_get_global_main ();
   unformat_input_t in;
 
   vlib_process_suspend (vm, 2.0);
@@ -348,6 +349,14 @@ startup_config_process (vlib_main_t * vm,
     {
       return 0;
     }
+
+  /*
+   * Wait until all modules creating interfaces from startup config are done
+   * (reference count drops to zero) before running exec, so exec's admin
+   * up/down (port_start) does not race with interface creation.
+   */
+  while (vgm->dev_config_pending)
+    vlib_process_suspend (vm, 0.1);
 
   unformat_init_vector (&in,
 			format (0, "exec %s", um->startup_config_filename));

@@ -314,6 +314,13 @@ typedef struct vlib_global_main_t
   /* Hash table to record which init functions have been called. */
   uword *init_functions_called;
 
+  /*
+   * Reference count of modules still creating interfaces from startup config.
+   * startup-config-process waits until it drops to zero before running exec
+   * cli commands.
+   */
+  volatile u32 dev_config_pending;
+
 } vlib_global_main_t;
 
 /* Global main structure. */
