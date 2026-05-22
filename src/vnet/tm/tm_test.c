@@ -8,9 +8,7 @@
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
 #include <vppinfra/error.h>
-
 #include <vnet/ip/ip_format_fns.h>
-
 #include <vpp/api/types.h>
 
 typedef struct
@@ -87,9 +85,11 @@ api_tm_sys_node_add (vat_main_t *vam)
   mp->weight = clib_host_to_net_u32 (weight);
   mp->priority = clib_host_to_net_u32 (priority);
   mp->lvl = clib_host_to_net_u32 (level);
-  if (flow_name)
-    strncpy ((char *) mp->flow_name, (char *) flow_name,
-	     sizeof (mp->flow_name) - 1);
+  if (flow_name != NULL)
+    {
+      strncpy ((char *) mp->flow_name, (char *) flow_name,
+	       sizeof (mp->flow_name) - 1);
+    }
 
   S (mp);
   W (ret);
@@ -592,127 +592,6 @@ api_tm_sys_stop_tm (vat_main_t *vam)
   S (mp);
   W (ret);
   return ret;
-}
-
-static void
-vl_api_tm_sys_node_add_reply_t_handler (vl_api_tm_sys_node_add_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node_add_id : %u\n", clib_net_to_host_u32 (mp->node_id));
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_node_suspend_reply_t_handler (
-  vl_api_tm_sys_node_suspend_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node_suspend_id : %u\n",
-		clib_net_to_host_u32 (mp->node_id));
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_node_resume_reply_t_handler (
-  vl_api_tm_sys_node_resume_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node_resume_ id : %u\n",
-		clib_net_to_host_u32 (mp->node_id));
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_node_delete_reply_t_handler (
-  vl_api_tm_sys_node_delete_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node_delete_id : %u\n",
-		clib_net_to_host_u32 (mp->node_id));
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_shaper_profile_create_reply_t_handler (
-  vl_api_tm_sys_shaper_profile_create_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("Shaper profile id : %u\n",
-		clib_net_to_host_u32 (mp->shaper_id));
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_node_shaper_update_reply_t_handler (
-  vl_api_tm_sys_node_shaper_update_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node updated shaper id : %d\n",
-		clib_net_to_host_i32 (mp->shaper_id));
-
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_shaper_profile_delete_reply_t_handler (
-  vl_api_tm_sys_shaper_profile_delete_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM shaper profile delete id : %d\n",
-		clib_net_to_host_i32 (mp->shaper_id));
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_node_sched_weight_update_reply_t_handler (
-  vl_api_tm_sys_node_sched_weight_update_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM node sched weight updated\n");
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_node_read_stats_reply_t_handler (
-  vl_api_tm_sys_node_read_stats_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM stats for node id : %u\n",
-		clib_net_to_host_u32 (mp->node_id));
-
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_get_capabilities_reply_t_handler (
-  vl_api_tm_sys_get_capabilities_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM Capability Passed  : %u\n");
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_level_get_capabilities_reply_t_handler (
-  vl_api_tm_sys_level_get_capabilities_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  clib_warning ("TM Level Capability Passed  : %u\n");
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_start_tm_reply_t_handler (vl_api_tm_sys_start_tm_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  vam->result_ready = 1;
-}
-
-static void
-vl_api_tm_sys_stop_tm_reply_t_handler (vl_api_tm_sys_stop_tm_reply_t *mp)
-{
-  vat_main_t *vam = tm_test_main.vat_main;
-  vam->result_ready = 1;
 }
 
 #include <vnet/tm/tm.api_test.c>

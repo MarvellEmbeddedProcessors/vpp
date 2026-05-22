@@ -2913,10 +2913,10 @@ classify_session_command_fn (vlib_main_t * vm,
 	return clib_error_return (0,
 				  "Flow name required for mark-flow action");
 
-      if (!flow_name_to_id_hash)
+      if (!vnet_tm_flow_name_to_id_hash)
 	return clib_error_return (0, "TM flow mapping not initialized");
 
-      uword *value = hash_get_mem (flow_name_to_id_hash, flow_name);
+      uword *value = hash_get_mem (vnet_tm_flow_name_to_id_hash, flow_name);
       if (!value)
 	return clib_error_return (0, "Invalid flow name: %s", flow_name);
 

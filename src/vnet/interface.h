@@ -308,7 +308,7 @@ typedef struct _vnet_device_class
   /* Interface to set rss queues of the interface */
   vnet_interface_rss_queues_set_t *set_rss_queues_function;
 
-  tm_system_t *tm_sys_impl;
+  vnet_tm_system_t *vnet_tm_sys_impl;
   pfc_system_t *pfc_sys_impl;
 } vnet_device_class_t;
 

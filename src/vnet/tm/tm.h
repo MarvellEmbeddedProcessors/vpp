@@ -4,8 +4,8 @@
  * https://spdx.org/licenses/Apache-2.0.html
  */
 
-#ifndef _TM_H_
-#define _TM_H_
+#ifndef _VNET_TM_H_
+#define _VNET_TM_H_
 
 #include <vlib/vlib.h>
 #include <vlib/unix/unix.h>
@@ -13,24 +13,22 @@
 #include <vppinfra/hash.h>
 #include <vnet/dev/types.h>
 
-// Global mapping of flow_name to flow_id
-extern uword *flow_name_to_id_hash;
-extern u32 next_flow_id;
+#define VNET_TM_MAX_FLOWS 1024
 
-// Function prototypes for managing flow_name to flow_id mapping
-u32 tm_create_flow_id (const char *flow_name);
-u32 tm_get_flow_id (const char *flow_name);
+/* Global mapping of flow_name to flow_id */
+extern uword *vnet_tm_flow_name_to_id_hash;
+extern u32 vnet_tm_flow_id_start;
 
-typedef struct tm_node_params_
+typedef struct vnet_tm_node_params_
 {
-  /* Shaper profile for the node. */
+  /** Shaper profile for the node. */
   i32 shaper_profile_id;
 
   union
   {
     struct
     {
-      /* The ingress queue buffer length */
+      /** The ingress queue buffer length */
       u32 ingress_q_len;
     } leaf;
 
@@ -52,9 +50,9 @@ typedef struct tm_node_params_
 
   /** TM Node id */
   u32 id;
-} tm_node_params_t;
+} vnet_tm_node_params_t;
 
-typedef struct tm_shaper_params_
+typedef struct vnet_tm_shaper_params_
 {
   struct
   {
@@ -81,73 +79,73 @@ typedef struct tm_shaper_params_
 
   /** Shaper profile ID */
   u32 shaper_id;
-} tm_shaper_params_t;
+} vnet_tm_shaper_params_t;
 
 typedef enum
 {
-  TM_BYTE_BASED_WEIGHTS,
-  TM_FRAME_BASED_WEIGHTS
-} tm_sched_mode_t;
+  VNET_TM_BYTE_BASED_WEIGHTS,
+  VNET_TM_FRAME_BASED_WEIGHTS
+} vnet_tm_sched_mode_t;
 
 /**
  * TM Color
  */
-enum tm_color
+enum vnet_tm_color
 {
-  TM_COLOR_GREEN = 0, /**< Green */
-  TM_COLOR_YELLOW,    /**< Yellow */
-  TM_COLOR_RED,	      /**< Red */
-  TM_COLORS	      /**< Number of colors */
+  VNET_TM_COLOR_GREEN = 0, /**< Green */
+  VNET_TM_COLOR_YELLOW,	   /**< Yellow */
+  VNET_TM_COLOR_RED,	   /**< Red */
+  VNET_TM_COLORS	   /**< Number of colors */
 };
 
 /**
  * The tm_node_stats_type enumeration lists possible packet or octet
  * statistics at a tm node.
  */
-typedef enum tm_node_stats_type_t
+typedef enum vnet_tm_node_stats_type_t
 {
   /** Packets dropped by this node after scheduling/shaping at this node */
-  TM_NODE_STATS_PKTS_DROPPED,
+  VNET_TM_NODE_STATS_PKTS_DROPPED,
   /** Octets dropped after scheduling/shaping at this node */
-  TM_NODE_STATS_OCTETS_DROPPED,
+  VNET_TM_NODE_STATS_OCTETS_DROPPED,
   /** Green packets that are sent through this tm node */
-  TM_NODE_STATS_GREEN_PKTS,
+  VNET_TM_NODE_STATS_GREEN_PKTS,
   /** Green octets that are sent through this tm node */
-  TM_NODE_STATS_GREEN_OCTETS,
+  VNET_TM_NODE_STATS_GREEN_OCTETS,
   /** Yellow packets that are sent through this tm node */
-  TM_NODE_STATS_YELLOW_PKTS,
+  VNET_TM_NODE_STATS_YELLOW_PKTS,
   /** Yellow octets that are sent through this tm node */
-  TM_NODE_STATS_YELLOW_OCTETS,
+  VNET_TM_NODE_STATS_YELLOW_OCTETS,
   /** Red packets that are sent through this tm node */
-  TM_NODE_STATS_RED_PKTS,
+  VNET_TM_NODE_STATS_RED_PKTS,
   /** Red octets that are sent through this tm node */
-  TM_NODE_STATS_RED_OCTETS,
+  VNET_TM_NODE_STATS_RED_OCTETS,
   /** Node stats max */
-  TM_NODE_STATS_MAX,
-} tm_node_stats_type_t;
+  VNET_TM_NODE_STATS_MAX,
+} vnet_tm_node_stats_type_t;
 
 /**
  * Node Capabilities Params
  */
-typedef struct tm_capa_params_
+typedef struct vnet_tm_capa_params_
 {
   /** Maximum number of nodes. */
-  uint32_t n_nodes_max;
+  u32 n_nodes_max;
 
   /** Maximum number of levels (i.e. number of nodes connecting the root
    * node with any leaf node, including the root and the leaf).
    */
-  uint32_t n_levels_max;
+  u32 n_levels_max;
 
   /** When non-zero, this flag indicates that all the non-leaf nodes
    * (with the exception of the root node) have identical capability set.
    */
-  int non_leaf_nodes_identical;
+  i32 non_leaf_nodes_identical;
 
   /** When non-zero, this flag indicates that all the leaf nodes have
    * identical capability set.
    */
-  int leaf_nodes_identical;
+  i32 leaf_nodes_identical;
 
   /** Maximum number of shapers, either private or shared. In case the
    * implementation does not share any resources between private and
@@ -155,12 +153,12 @@ typedef struct tm_capa_params_
    * *shaper_private_n_max* and *shaper_shared_n_max*. The
    * value of zero indicates that traffic shaping is not supported.
    */
-  uint32_t shaper_n_max;
+  u32 shaper_n_max;
   /** Maximum number of private shapers. Indicates the maximum number of
    * nodes that can concurrently have their private shaper enabled. The
    * value of zero indicates that private shapers are not supported.
    */
-  uint32_t shaper_private_n_max;
+  u32 shaper_private_n_max;
 
   /** Maximum number of private shapers that support dual rate shaping.
    * Indicates the maximum number of nodes that can concurrently have
@@ -169,16 +167,16 @@ typedef struct tm_capa_params_
    * rate shaping is not available for private shapers. The maximum value
    * is *shaper_private_n_max*.
    */
-  int shaper_private_dual_rate_n_max;
+  i32 shaper_private_dual_rate_n_max;
 
   /** Minimum committed/peak rate (bytes per second) for any private
    * shaper. Valid only when private shapers are supported.
    */
-  uint64_t shaper_private_rate_min;
+  u64 shaper_private_rate_min;
   /** Maximum committed/peak rate (bytes per second) for any private
    * shaper. Valid only when private shapers are supported.
    */
-  uint64_t shaper_private_rate_max;
+  u64 shaper_private_rate_max;
 
   /** Shaper private packet mode supported. When non-zero, this parameter
    * indicates that there is at least one node that can be configured
@@ -186,7 +184,7 @@ typedef struct tm_capa_params_
    * in packet mode, committed/peak rate provided is interpreted
    * in packets per second.
    */
-  int shaper_private_packet_mode_supported;
+  i32 shaper_private_packet_mode_supported;
 
   /** Shaper private byte mode supported. When non-zero, this parameter
    * indicates that there is at least one node that can be configured
@@ -194,23 +192,23 @@ typedef struct tm_capa_params_
    * in byte mode, committed/peak rate provided is interpreted in
    * bytes per second.
    */
-  int shaper_private_byte_mode_supported;
+  i32 shaper_private_byte_mode_supported;
   /** Minimum value allowed for packet length adjustment for any private
    * or shared shaper.
    */
-  int shaper_pkt_length_adjust_min;
+  i32 shaper_pkt_length_adjust_min;
 
   /** Maximum value allowed for packet length adjustment for any private
    * or shared shaper.
    */
-  int shaper_pkt_length_adjust_max;
+  i32 shaper_pkt_length_adjust_max;
 
   /** Maximum number of children nodes. This parameter indicates that
    * there is at least one non-leaf node that can be configured with this
    * many children nodes, which might not be true for all the non-leaf
    * nodes.
    */
-  uint32_t sched_n_children_max;
+  u32 sched_n_children_max;
 
   /** Maximum number of supported priority levels. This parameter
    * indicates that there is at least one non-leaf node that can be
@@ -220,7 +218,7 @@ typedef struct tm_capa_params_
    * supported, which essentially means that Strict Priority (SP)
    * algorithm is not supported.
    */
-  uint32_t sched_sp_n_priorities_max;
+  u32 sched_sp_n_priorities_max;
   /** Maximum number of sibling nodes that can have the same priority at
    * any given time, i.e. maximum size of the WFQ sibling node group. This
    * parameter indicates there is at least one non-leaf node that meets
@@ -229,7 +227,7 @@ typedef struct tm_capa_params_
    * algorithm is not supported. The maximum value is
    * *sched_n_children_max*.
    */
-  uint32_t sched_wfq_n_children_per_group_max;
+  u32 sched_wfq_n_children_per_group_max;
 
   /** Maximum number of priority levels that can have more than one child
    * node at any given time, i.e. maximum number of WFQ sibling node
@@ -242,12 +240,12 @@ typedef struct tm_capa_params_
    * more sibling nodes making up a WFQ group. The maximum value is:
    * min(floor(*sched_n_children_max* / 2), *sched_sp_n_priorities_max*).
    */
-  uint32_t sched_wfq_n_groups_max;
+  u32 sched_wfq_n_groups_max;
 
   /** Maximum WFQ weight. The value of 1 indicates that all sibling nodes
    * with same priority have the same WFQ weight, so WFQ is reduced to FQ.
    */
-  uint32_t sched_wfq_weight_max;
+  u32 sched_wfq_weight_max;
 
   /** WFQ packet mode supported. When non-zero, this parameter indicates
    * that there is at least one non-leaf node that supports packet mode
@@ -255,7 +253,7 @@ typedef struct tm_capa_params_
    * packet count for scheduling children when a non-leaf node
    * is configured appropriately.
    */
-  int sched_wfq_packet_mode_supported;
+  i32 sched_wfq_packet_mode_supported;
 
   /** WFQ byte mode supported. When non-zero, this parameter indicates
    * that there is at least one non-leaf node that supports byte mode
@@ -263,41 +261,41 @@ typedef struct tm_capa_params_
    * bytes for scheduling children when a non-leaf node is configured
    * appropriately.
    */
-  int sched_wfq_byte_mode_supported;
+  i32 sched_wfq_byte_mode_supported;
 
-} tm_capa_params_t;
+} vnet_tm_capa_params_t;
 
 /**
  * Traffic manager level capabilities
  */
-typedef struct tm_level_capa_params_
+typedef struct vnet_tm_level_capa_params_
 {
   /** Maximum number of nodes for the current hierarchy level. */
-  uint32_t n_nodes_max;
+  u32 n_nodes_max;
 
   /** Maximum number of non-leaf nodes for the current hierarchy level.
    * The value of 0 indicates that current level only supports leaf
    * nodes. The maximum value is *n_nodes_max*.
    */
-  uint32_t n_nodes_nonleaf_max;
+  u32 n_nodes_nonleaf_max;
 
   /** Maximum number of leaf nodes for the current hierarchy level. The
    * value of 0 indicates that current level only supports non-leaf
    * nodes. The maximum value is *n_nodes_max*.
    */
-  uint32_t n_nodes_leaf_max;
+  u32 n_nodes_leaf_max;
 
   /** When non-zero, this flag indicates that all the non-leaf nodes on
    * this level have identical capability set. Valid only when
    * *n_nodes_nonleaf_max* is non-zero.
    */
-  int non_leaf_nodes_identical;
+  i32 non_leaf_nodes_identical;
 
   /** When non-zero, this flag indicates that all the leaf nodes on this
    * level have identical capability set. Valid only when
    * *n_nodes_leaf_max* is non-zero.
    */
-  int leaf_nodes_identical;
+  i32 leaf_nodes_identical;
   union
   {
     /** Items valid only for the non-leaf nodes on this level. */
@@ -308,7 +306,7 @@ typedef struct tm_level_capa_params_
        * with private shaper support, which may not be the
        * case for all the non-leaf nodes on this level.
        */
-      int shaper_private_supported;
+      i32 shaper_private_supported;
 
       /** Dual rate support for private shaper. Valid only
        * when private shaper is supported for the non-leaf
@@ -318,21 +316,21 @@ typedef struct tm_level_capa_params_
        * may not be the case for all the non-leaf nodes on
        * this level.
        */
-      int shaper_private_dual_rate_supported;
+      i32 shaper_private_dual_rate_supported;
 
       /** Minimum committed/peak rate (bytes per second) for
        * private shapers of the non-leaf nodes of this level.
        * Valid only when private shaper is supported on this
        * level.
        */
-      uint64_t shaper_private_rate_min;
+      u64 shaper_private_rate_min;
 
       /** Maximum committed/peak rate (bytes per second) for
        * private shapers of the non-leaf nodes on this level.
        * Valid only when private shaper is supported on this
        * level.
        */
-      uint64_t shaper_private_rate_max;
+      u64 shaper_private_rate_max;
 
       /** Shaper private packet mode supported. When non-zero,
        * this parameter indicates there is at least one
@@ -341,7 +339,7 @@ typedef struct tm_level_capa_params_
        * shaper is configured in packet mode, committed/peak
        * rate provided is interpreted in packets per second.
        */
-      int shaper_private_packet_mode_supported;
+      i32 shaper_private_packet_mode_supported;
 
       /** Shaper private byte mode supported. When non-zero,
        * this parameter indicates there is at least one
@@ -350,7 +348,7 @@ typedef struct tm_level_capa_params_
        * shaper is configured in byte mode, committed/peak
        * rate provided is interpreted in bytes per second.
        */
-      int shaper_private_byte_mode_supported;
+      i32 shaper_private_byte_mode_supported;
 
       /** Maximum number of children nodes. This parameter
        * indicates that there is at least one non-leaf node on
@@ -358,7 +356,7 @@ typedef struct tm_level_capa_params_
        * children nodes, which might not be true for all the
        * non-leaf nodes on this level.
        */
-      uint32_t sched_n_children_max;
+      u32 sched_n_children_max;
       /** Maximum number of supported priority levels. This
        * parameter indicates that there is at least one
        * non-leaf node on this level that can be configured
@@ -370,7 +368,7 @@ typedef struct tm_level_capa_params_
        * Priority (SP) algorithm is not supported on this
        * level.
        */
-      uint32_t sched_sp_n_priorities_max;
+      u32 sched_sp_n_priorities_max;
 
       /** Maximum number of sibling nodes that can have the
        * same priority at any given time, i.e. maximum size of
@@ -382,7 +380,7 @@ typedef struct tm_level_capa_params_
        * algorithm is not supported on this level. The maximum
        * value is *sched_n_children_max*.
        */
-      uint32_t sched_wfq_n_children_per_group_max;
+      u32 sched_wfq_n_children_per_group_max;
 
       /** Maximum number of priority levels that can have
        * more than one child node at any given time, i.e.
@@ -401,13 +399,13 @@ typedef struct tm_level_capa_params_
        * min(floor(*sched_n_children_max* / 2),
        * *sched_sp_n_priorities_max*).
        */
-      uint32_t sched_wfq_n_groups_max;
+      u32 sched_wfq_n_groups_max;
       /** Maximum WFQ weight. The value of 1 indicates that
        * all sibling nodes on this level with same priority
        * have the same WFQ weight, so on this level WFQ is
        * reduced to FQ.
        */
-      uint32_t sched_wfq_weight_max;
+      u32 sched_wfq_weight_max;
 
       /** WFQ packet mode supported. When non-zero, this
        * parameter indicates that there is at least one
@@ -417,7 +415,7 @@ typedef struct tm_level_capa_params_
        * children when a non-leaf node is configured
        * appropriately.
        */
-      int sched_wfq_packet_mode_supported;
+      i32 sched_wfq_packet_mode_supported;
 
       /** WFQ byte mode supported. When non-zero, this
        * parameter indicates that there is at least one
@@ -426,7 +424,7 @@ typedef struct tm_level_capa_params_
        * be applied against bytes for scheduling children
        * when a non-leaf node is configured appropriately.
        */
-      int sched_wfq_byte_mode_supported;
+      i32 sched_wfq_byte_mode_supported;
 
       /** Mask of statistics counter types supported by the
        * non-leaf nodes on this level. Every supported
@@ -435,7 +433,7 @@ typedef struct tm_level_capa_params_
        * for all the non-leaf nodes on this level.
        * @see enum rte_tm_stats_type
        */
-      uint64_t stats_mask;
+      u64 stats_mask;
     } nonleaf;
 
     /** Items valid only for the leaf nodes on this level. */
@@ -446,7 +444,7 @@ typedef struct tm_level_capa_params_
        * private shaper support, which may not be the case for
        * all the leaf nodes on this level.
        */
-      int shaper_private_supported;
+      i32 shaper_private_supported;
 
       /** Dual rate support for private shaper. Valid only
        * when private shaper is supported for the leaf nodes
@@ -455,21 +453,21 @@ typedef struct tm_level_capa_params_
        * private shaper support, which may not be the case for
        * all the leaf nodes on this level.
        */
-      int shaper_private_dual_rate_supported;
+      i32 shaper_private_dual_rate_supported;
 
       /** Minimum committed/peak rate (bytes per second) for
        * private shapers of the leaf nodes of this level.
        * Valid only when private shaper is supported for the
        * leaf nodes on this level.
        */
-      uint64_t shaper_private_rate_min;
+      u64 shaper_private_rate_min;
 
       /** Maximum committed/peak rate (bytes per second) for
        * private shapers of the leaf nodes on this level.
        * Valid only when private shaper is supported for the
        * leaf nodes on this level.
        */
-      uint64_t shaper_private_rate_max;
+      u64 shaper_private_rate_max;
 
       /** Shaper private packet mode supported. When non-zero,
        * this parameter indicates there is at least one leaf
@@ -478,7 +476,7 @@ typedef struct tm_level_capa_params_
        * shaper is configured in packet mode, committed/peak
        * rate provided is interpreted in packets per second.
        */
-      int shaper_private_packet_mode_supported;
+      i32 shaper_private_packet_mode_supported;
       /** Shaper private byte mode supported. When non-zero,
        * this parameter indicates there is at least one leaf
        * node at this level that can be configured with
@@ -486,22 +484,22 @@ typedef struct tm_level_capa_params_
        * is configured in byte mode, committed/peak rate
        * provided is interpreted in bytes per second.
        */
-      int shaper_private_byte_mode_supported;
+      i32 shaper_private_byte_mode_supported;
 
     } leaf;
   };
-} tm_level_capa_params_t;
+} vnet_tm_level_capa_params_t;
 
 /**
  * Node statistics counters
  */
-typedef struct tm_stats_params_
+typedef struct vnet_tm_stats_params_
 {
   /** Number of packets scheduled from current node. */
-  uint64_t n_pkts;
+  u64 n_pkts;
 
   /** Number of bytes scheduled from current node. */
-  uint64_t n_bytes;
+  u64 n_bytes;
 
   /** Statistics counters for leaf nodes only. */
   struct
@@ -509,46 +507,78 @@ typedef struct tm_stats_params_
     /** Number of packets dropped by current leaf node per each
      * color.
      */
-    uint64_t n_pkts_dropped[TM_COLORS];
+    u64 n_pkts_dropped[VNET_TM_COLORS];
 
     /** Number of bytes dropped by current leaf node per each
      * color.
      */
-    uint64_t n_bytes_dropped[TM_COLORS];
+    u64 n_bytes_dropped[VNET_TM_COLORS];
 
     /** Number of packets currently waiting in the packet queue of
      * current leaf node.
      */
-    uint64_t n_pkts_queued;
+    u64 n_pkts_queued;
     /** Number of bytes currently waiting in the packet queue of
      * current leaf node.
      */
-    uint64_t n_bytes_queued;
+    u64 n_bytes_queued;
   } leaf;
-} tm_stats_params_t;
+} vnet_tm_stats_params_t;
 
-typedef struct tm_system_t_
+typedef struct vnet_tm_system_t_
 {
   u32 hw_if_idx;
   int (*node_add) (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
-		   u32 priority, u32 weight, u32 lvl, tm_node_params_t *params,
-		   const char *flow_name);
+		   u32 priority, u32 weight, u32 lvl,
+		   vnet_tm_node_params_t *params, const char *flow_name);
   int (*node_suspend) (u32 hw_if_idx, u32 node_idx);
   int (*node_resume) (u32 hw_if_idx, u32 node_idx);
   int (*node_delete) (u32 hw_if_idx, u32 node_idx);
-  int (*shaper_profile_create) (u32 hw_if_idx, tm_shaper_params_t *param);
+  int (*shaper_profile_create) (u32 hw_if_idx, vnet_tm_shaper_params_t *param);
   int (*shaper_profile_delete) (u32 hw_if_idx, i32 shaper_id);
   int (*node_shaper_update) (u32 hw_if_idx, u32 node_id,
 			     i32 shaper_profile_id);
   int (*node_sched_weight_update) (u32 hw_if_idx, u32 node_id, u32 weight);
   int (*node_read_stats) (u32 hw_if_idx, u32 node_idx,
-			  tm_stats_params_t *param);
-  int (*tm_get_capabilities) (u32 hw_if_idx, tm_capa_params_t *capa_param);
-  int (*tm_level_get_capabilities) (u32 hw_if_idx, tm_level_capa_params_t *cap,
-				    u32 lvl);
+			  vnet_tm_stats_params_t *param);
+  int (*tm_get_capabilities) (u32 hw_if_idx,
+			      vnet_tm_capa_params_t *capa_param);
+  int (*tm_level_get_capabilities) (u32 hw_if_idx,
+				    vnet_tm_level_capa_params_t *cap, u32 lvl);
   int (*start_tm) (u32 hw_if_idx);
   int (*stop_tm) (u32 hw_if_idx);
-} tm_system_t;
+} vnet_tm_system_t;
+
+/**
+ * @brief Check if a flow_id falls within the TM reserved range.
+ */
+static inline int
+vnet_tm_flow_id_is_valid (u32 flow_id)
+{
+  return (flow_id >= vnet_tm_flow_id_start &&
+	  flow_id < vnet_tm_flow_id_start + VNET_TM_MAX_FLOWS);
+}
+
+/**
+ * @brief Get or create a global flow_id for the given flow_name.
+ *
+ * If the flow_name already exists, returns the existing flow_id.
+ * Otherwise allocates a new flow_id from the TM range and returns it.
+ *
+ * @param flow_name - Global flow name.
+ *
+ * @return The flow_id mapped to the given flow_name.
+ */
+u32 vnet_tm_create_flow_id (const char *flow_name);
+
+/**
+ * @brief Fetch the global flow_id mapped to the given flow_name.
+ *
+ * @param flow_name - Global flow name.
+ *
+ * @return The flow_id mapped to the given flow_name, or 0 if not found.
+ */
+u32 vnet_tm_get_flow_id (const char *flow_name);
 
 /**
  * @brief Add a new traffic management node and connect it to an
@@ -567,9 +597,10 @@ typedef struct tm_system_t_
  *
  * @return 0 on success.
  */
-int tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
-		     u32 priority, u32 weight, u32 lvl,
-		     tm_node_params_t *params, const char *flow_name);
+int vnet_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
+			  u32 priority, u32 weight, u32 lvl,
+			  vnet_tm_node_params_t *params,
+			  const char *flow_name);
 
 /**
  * @brief Suspend an existing traffic management node.
@@ -579,7 +610,7 @@ int tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
  *
  * @return 0 on success.
  */
-int tm_sys_node_suspend (u32 hw_if_idx, u32 node_idx);
+int vnet_tm_sys_node_suspend (u32 hw_if_idx, u32 node_idx);
 
 /**
  * @brief Resume a suspended traffic management node.
@@ -589,7 +620,7 @@ int tm_sys_node_suspend (u32 hw_if_idx, u32 node_idx);
  *
  * @return 0 on success.
  */
-int tm_sys_node_resume (u32 hw_if_idx, u32 node_idx);
+int vnet_tm_sys_node_resume (u32 hw_if_idx, u32 node_idx);
 
 /**
  * @brief Delete an existing traffic management node.
@@ -601,7 +632,7 @@ int tm_sys_node_resume (u32 hw_if_idx, u32 node_idx);
  *
  * @return 0 on success.
  */
-int tm_sys_node_delete (u32 hw_if_idx, u32 node_idx);
+int vnet_tm_sys_node_delete (u32 hw_if_idx, u32 node_idx);
 
 /**
  * @brief Create a new shaper profile for traffic management.
@@ -611,7 +642,8 @@ int tm_sys_node_delete (u32 hw_if_idx, u32 node_idx);
  *
  * @return 0 on success.
  */
-int tm_sys_shaper_profile_create (u32 hw_if_idx, tm_shaper_params_t *param);
+int vnet_tm_sys_shaper_profile_create (u32 hw_if_idx,
+				       vnet_tm_shaper_params_t *param);
 
 /**
  * @brief Update the shaper profile id of a TM node.
@@ -623,8 +655,8 @@ int tm_sys_shaper_profile_create (u32 hw_if_idx, tm_shaper_params_t *param);
  *
  * @return 0 on success.
  */
-int tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id,
-			       i32 shaper_profile_id);
+int vnet_tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id,
+				    i32 shaper_profile_id);
 
 /**
  * @brief Delete an existing shaper profile.
@@ -634,7 +666,7 @@ int tm_sys_node_shaper_update (u32 hw_if_idx, u32 node_id,
  *
  * @return 0 on success.
  */
-int tm_sys_shaper_profile_delete (u32 hw_if_idx, i32 shaper_id);
+int vnet_tm_sys_shaper_profile_delete (u32 hw_if_idx, i32 shaper_id);
 
 /**
  * @brief Update the scheduling weight of a TM node.
@@ -645,7 +677,8 @@ int tm_sys_shaper_profile_delete (u32 hw_if_idx, i32 shaper_id);
  *
  * @return 0 on success.
  */
-int tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight);
+int vnet_tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id,
+					  u32 weight);
 
 /**
  * @brief Read statistics for a specific traffic management node.
@@ -656,18 +689,20 @@ int tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight);
  *
  * @return 0 on success.
  */
-int tm_sys_node_read_stats (u32 hw_if_idx, u32 node_idx,
-			    tm_stats_params_t *param);
+int vnet_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_idx,
+				 vnet_tm_stats_params_t *param);
 /**
  * @brief Read Capabilities for a specific traffic management system.
  */
-int tm_sys_get_capabilities (u32 hw_if_idx, tm_capa_params_t *capa_param);
+int vnet_tm_sys_get_capabilities (u32 hw_if_idx,
+				  vnet_tm_capa_params_t *capa_param);
 
 /**
  * @brief Read level Capabilities for a specific traffic management system.
  */
-int tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *cap,
-				   u32 lvl);
+int vnet_tm_sys_level_get_capabilities (u32 hw_if_idx,
+					vnet_tm_level_capa_params_t *cap,
+					u32 lvl);
 
 /**
  * @brief Start the traffic management system.
@@ -676,7 +711,7 @@ int tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *cap,
  *
  * @return 0 on success.
  */
-int tm_sys_start_tm (u32 hw_if_idx);
+int vnet_tm_sys_start_tm (u32 hw_if_idx);
 
 /**
  * @brief Stop the traffic management system.
@@ -685,7 +720,7 @@ int tm_sys_start_tm (u32 hw_if_idx);
  *
  * @return 0 on success.
  */
-int tm_sys_stop_tm (u32 hw_if_idx);
+int vnet_tm_sys_stop_tm (u32 hw_if_idx);
 
 /**
  * @brief Register the traffic management (TM) system.
@@ -695,5 +730,5 @@ int tm_sys_stop_tm (u32 hw_if_idx);
  *
  * @return 0 on success.
  */
-int tm_system_register (tm_system_t *tm_sys, u32 hw_if_idx);
-#endif
+int vnet_tm_system_register (vnet_tm_system_t *tm_sys, u32 hw_if_idx);
+#endif // _VNET_TM_H_

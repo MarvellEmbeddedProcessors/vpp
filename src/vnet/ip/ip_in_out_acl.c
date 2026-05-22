@@ -325,10 +325,7 @@ ip_in_out_acl_inline_trace (
 	      else
 		{
 		  if (e[0]->action == CLASSIFY_ACTION_MARK_FLOW)
-		    {
-		      b[0]->flow_id = e[0]->metadata;
-		      b[0]->flags |= VNET_BUFFER_F_TM_QUEUE_VALID;
-		    }
+		    b[0]->flow_id = e[0]->metadata;
 		}
 	    }
 	  else
@@ -403,10 +400,7 @@ ip_in_out_acl_inline_trace (
 		      else
 			{
 			  if (e[0]->action == CLASSIFY_ACTION_MARK_FLOW)
-			    {
-			      b[0]->flow_id = e[0]->metadata;
-			      b[0]->flags |= VNET_BUFFER_F_TM_QUEUE_VALID;
-			    }
+			    b[0]->flow_id = e[0]->metadata;
 			}
 		      break;
 		    }
@@ -449,10 +443,7 @@ ip_in_out_acl_inline_trace (
 	      else
 		{
 		  if (e[1]->action == CLASSIFY_ACTION_MARK_FLOW)
-		    {
-		      b[1]->flow_id = e[1]->metadata;
-		      b[1]->flags |= VNET_BUFFER_F_TM_QUEUE_VALID;
-		    }
+		    b[1]->flow_id = e[1]->metadata;
 		}
 	    }
 	  else
@@ -529,7 +520,6 @@ ip_in_out_acl_inline_trace (
 			  if (e[1]->action == CLASSIFY_ACTION_MARK_FLOW)
 			    {
 			      b[1]->flow_id = e[1]->metadata;
-			      b[1]->flags |= VNET_BUFFER_F_TM_QUEUE_VALID;
 			    }
 			}
 		      break;
@@ -668,10 +658,7 @@ ip_in_out_acl_inline_trace (
 	      else
 		{
 		  if (e0->action == CLASSIFY_ACTION_MARK_FLOW)
-		    {
-		      b[0]->flow_id = e0->metadata;
-		      b[0]->flags |= VNET_BUFFER_F_TM_QUEUE_VALID;
-		    }
+		    b[0]->flow_id = e0->metadata;
 		}
 	    }
 	  else
@@ -742,10 +729,7 @@ ip_in_out_acl_inline_trace (
 		      else
 			{
 			  if (e0->action == CLASSIFY_ACTION_MARK_FLOW)
-			    {
-			      b[0]->flow_id = e0->metadata;
-			      b[0]->flags |= VNET_BUFFER_F_TM_QUEUE_VALID;
-			    }
+			    b[0]->flow_id = e0->metadata;
 			}
 		      break;
 		    }
