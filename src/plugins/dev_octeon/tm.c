@@ -67,7 +67,7 @@ oct_tm_get_node_id_from_flow_id (u32 flow_id)
 int
 oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
 		     u32 priority, u32 weight, u32 lvl,
-		     tm_node_params_t *params, const char *flow_name)
+		     vnet_tm_node_params_t *params, const char *flow_name)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -140,13 +140,13 @@ oct_tm_sys_node_add (u32 hw_if_idx, u32 node_id, i32 parent_node_id,
     {
       if (flow_name && flow_name[0])
 	{
-	  flow_id = tm_get_flow_id (flow_name);
+	  flow_id = vnet_tm_get_flow_id (flow_name);
 	  if (flow_id)
 	    oct_tm_add_flow_id_to_node_id_mapping (flow_id, node_id);
 	}
     }
   else
-    clib_warning ("Flow_name:%s is not used for non-leaf tm nodes\n",
+    clib_warning ("Flow_name:%s is not used for non-leaf tm nodes",
 		  flow_name ? flow_name : "(null)");
 
   roc_nix_tm_shaper_default_red_algo (tm_node, profile);
@@ -236,7 +236,8 @@ oct_tm_sys_node_delete (u32 hw_if_idx, u32 node_id)
 }
 
 int
-oct_tm_sys_shaper_profile_create (u32 hw_if_idx, tm_shaper_params_t *params)
+oct_tm_sys_shaper_profile_create (u32 hw_if_idx,
+				  vnet_tm_shaper_params_t *params)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -378,7 +379,7 @@ oct_tm_sys_node_sched_weight_update (u32 hw_if_idx, u32 node_id, u32 weight)
 }
 
 int
-oct_tm_sys_get_capabilities (u32 hw_if_idx, tm_capa_params_t *cap)
+oct_tm_sys_get_capabilities (u32 hw_if_idx, vnet_tm_capa_params_t *cap)
 {
 
   vnet_main_t *vnm = vnet_get_main ();
@@ -435,8 +436,8 @@ oct_tm_sys_get_capabilities (u32 hw_if_idx, tm_capa_params_t *cap)
 }
 
 int
-oct_tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *cap,
-				   u32 lvl)
+oct_tm_sys_level_get_capabilities (u32 hw_if_idx,
+				   vnet_tm_level_capa_params_t *cap, u32 lvl)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -526,7 +527,7 @@ oct_tm_sys_level_get_capabilities (u32 hw_if_idx, tm_level_capa_params_t *cap,
 
 int
 oct_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_id,
-			    tm_stats_params_t *stats)
+			    vnet_tm_stats_params_t *stats)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, hw_if_idx);
@@ -555,9 +556,8 @@ oct_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_id,
 	{
 	  stats->n_pkts = qstats.tx_pkts;
 	  stats->n_bytes = qstats.tx_octs;
-	  printf ("  - STATS for node \n");
-	  printf ("  -- pkts (%" PRIu64 ") bytes (%" PRIu64 ")\n",
-		  stats->n_pkts, stats->n_bytes);
+	  log_info (dev, "TM node %u stats: pkts %" PRIu64 " bytes %" PRIu64,
+		    node_id, stats->n_pkts, stats->n_bytes);
 	}
       goto exit;
     }
@@ -565,9 +565,9 @@ oct_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_id,
   rc = roc_nix_tm_node_stats_get (nix, node_id, clear, &nix_tm_stats);
   if (!rc)
     {
-      stats->leaf.n_pkts_dropped[TM_COLOR_RED] =
+      stats->leaf.n_pkts_dropped[VNET_TM_COLOR_RED] =
 	nix_tm_stats.stats[ROC_NIX_TM_NODE_PKTS_DROPPED];
-      stats->leaf.n_bytes_dropped[TM_COLOR_RED] =
+      stats->leaf.n_bytes_dropped[VNET_TM_COLOR_RED] =
 	nix_tm_stats.stats[ROC_NIX_TM_NODE_BYTES_DROPPED];
     }
 
@@ -641,9 +641,11 @@ oct_tm_sys_stop (u32 hw_if_idx)
   return 0;
 }
 
-tm_system_t dev_oct_tm_ops = {
+vnet_tm_system_t oct_tm_ops = {
   .node_add = oct_tm_sys_node_add,
   .node_delete = oct_tm_sys_node_delete,
+  .node_suspend = oct_tm_sys_node_suspend,
+  .node_resume = oct_tm_sys_node_resume,
   .node_read_stats = oct_tm_sys_node_read_stats,
   .tm_get_capabilities = oct_tm_sys_get_capabilities,
   .tm_level_get_capabilities = oct_tm_sys_level_get_capabilities,

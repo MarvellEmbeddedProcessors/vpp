@@ -290,7 +290,9 @@ typedef enum
      "aura batch alloc issue failed")                                         \
   _ (AURA_BATCH_ALLOC_NOT_READY, aura_batch_alloc_not_ready, ERROR,           \
      "aura batch alloc not ready")                                            \
-  _ (MTU_EXCEEDED, mtu_exceeded, ERROR, "mtu exceeded")
+  _ (MTU_EXCEEDED, mtu_exceeded, ERROR, "mtu exceeded")                       \
+  _ (TM_FLOW_ID_UNMAPPED, tm_flow_id_unmapped, INFO,                          \
+     "tm flow_id valid but unmapped to local queue")
 
 typedef enum
 {
@@ -312,7 +314,7 @@ typedef struct
   oct_tx_desc_t desc;
 } oct_tx_trace_t;
 
-extern tm_system_t dev_oct_tm_ops;
+extern vnet_tm_system_t oct_tm_ops;
 
 #define foreach_oct_fp_flag                                                   \
   _ (UNUSED, 0)                                                               \

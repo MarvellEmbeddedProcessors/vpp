@@ -16,7 +16,7 @@
 #define OCT_ETH_LINK_SPEED_100G 100000 /**< 100 Gbps */
 
 extern oct_inl_dev_main_t oct_inl_dev_main;
-tm_system_t tm_system_ops;
+vnet_tm_system_t vnet_tm_system_ops;
 pfc_system_t pfc_system_ops;
 
 VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
@@ -32,10 +32,10 @@ static const u64 rxq_cfg =
   ROC_NIX_LF_RX_CFG_LEN_IL3 | ROC_NIX_LF_RX_CFG_LEN_IL4;
 
 static int
-oct_init_tm_args (tm_system_t *tm)
+oct_init_tm_args (vnet_tm_system_t *tm)
 {
-  memset (tm, 0, sizeof (tm_system_t));
-  memcpy (tm, &dev_oct_tm_ops, sizeof (tm_system_t));
+  memset (tm, 0, sizeof (vnet_tm_system_t));
+  memcpy (tm, &oct_tm_ops, sizeof (vnet_tm_system_t));
   if (!oct_tm_flow_id_to_node_id_hash)
     oct_tm_flow_id_to_node_id_hash = hash_create (0, sizeof (uword));
   return 0;
@@ -330,8 +330,9 @@ oct_port_init (vlib_main_t *vm, vnet_dev_port_t *port)
 
   if (is_egress_tm_enable)
     {
-      oct_init_tm_args (&tm_system_ops);
-      tm_system_register (&tm_system_ops, ifs->primary_interface.hw_if_index);
+      oct_init_tm_args (&vnet_tm_system_ops);
+      vnet_tm_system_register (&vnet_tm_system_ops,
+			       ifs->primary_interface.hw_if_index);
     }
 
   oct_pfc_sys_init_args (&pfc_system_ops);

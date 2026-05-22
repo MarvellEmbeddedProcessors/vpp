@@ -2207,6 +2207,7 @@ oct_tx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   int ipsec_cnt = 0, pkt_cnt = 0;
   u32 all_same_sq = 1, ipsec_all_same_sq = 0;
   u32 default_sq = ctq->sq.qid;
+  u32 n_unmapped = 0;
   u32 tmq;
   u32 thread_index = vm->thread_index;
 #ifdef PLATFORM_OCTEON9
@@ -2240,8 +2241,12 @@ oct_tx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       tmq = ~0;
 
       if ((features & OCT_TX_TM) &&
-	  PREDICT_FALSE (b[0]->flags & VNET_BUFFER_F_TM_QUEUE_VALID))
-	tmq = oct_tm_get_node_id_from_flow_id (b[0]->flow_id);
+	  PREDICT_FALSE (vnet_tm_flow_id_is_valid (b[0]->flow_id)))
+	{
+	  tmq = oct_tm_get_node_id_from_flow_id (b[0]->flow_id);
+	  if (PREDICT_FALSE (tmq == ~0))
+	    n_unmapped++;
+	}
 
       if ((features & OCT_TX_IPSEC) &&
 	  (vnet_buffer (b[0])->oflags & VNET_BUFFER_OFFLOAD_F_IPSEC_OFFLOAD))
@@ -2281,6 +2286,10 @@ oct_tx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       vlib_error_count (vm, node_index, OCT_TX_NODE_CTR_NO_FREE_SLOTS,
 			(n_left - ipsec_cnt - pkt_cnt));
     }
+
+  if (PREDICT_FALSE (n_unmapped))
+    vlib_error_count (vm, node_index, OCT_TX_NODE_CTR_TM_FLOW_ID_UNMAPPED,
+		      n_unmapped);
 
   return (ipsec_cnt + pkt_cnt);
 }
