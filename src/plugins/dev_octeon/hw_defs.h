@@ -95,4 +95,8 @@ typedef struct
 
 STATIC_ASSERT_SIZEOF (oct_nix_rx_cqe_desc_t, 128);
 
+/* errcode[7:0] << 4 | errlev[3:0] = 12 bits from NIX_RX_PARSE_S w0 [31:20] */
+#define OCT_RX_ERR_SHIFT 20
+#define OCT_RX_ERR_MASK	 0xFFF
+
 #endif /* _OCT_HW_DEFS_H_ */

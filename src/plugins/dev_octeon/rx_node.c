@@ -17,7 +17,7 @@ typedef struct
   u32 trace_count;
   u32 n_traced;
   oct_nix_rx_cqe_desc_t *next_desc;
-  u64 parse_w0_or;
+  u8 ip4_cksum_ok;
   u32 n_left_to_next;
   u32 *to_next;
   u16 *next;
@@ -26,6 +26,145 @@ typedef struct
   u32 n_segs;
   u16 buffer_start_index;
 } oct_rx_node_ctx_t;
+
+#define OCT_RX_OL_FLAGS_TBL_SZ (1 << 12)
+
+/* L4 checksum flags OR'ed into the vlib buffer. */
+#define OCT_RX_OL_L4_MASK                                                     \
+  (VNET_BUFFER_F_L4_CHECKSUM_COMPUTED | VNET_BUFFER_F_L4_CHECKSUM_CORRECT)
+
+/*
+ * Marks the table entry as IPv4-header-checksum bad. It feeds the per-frame
+ * ip4 cksum decision and is masked out before OR'ing into the buffer flags, so
+ * it must use a low bit that does not overlap OCT_RX_OL_L4_MASK (vnet buffer
+ * flags are allocated from bit 31 down).
+ */
+#define OCT_RX_OL_F_IP4_CKSUM_BAD (1u << 0)
+
+STATIC_ASSERT (
+  (OCT_RX_OL_F_IP4_CKSUM_BAD & OCT_RX_OL_L4_MASK) == 0,
+  "IP4 cksum marker must not overlap the L4 checksum buffer flags");
+
+/*
+ * Build the lookup table indexed by the 12-bit {errcode[7:0], errlev[3:0]}
+ * field of NIX_RX_PARSE_S word0. Each entry holds the L4 checksum state
+ * (COMPUTED|CORRECT = good, COMPUTED = bad, 0 = not validated) and the
+ * OCT_RX_OL_F_IP4_CKSUM_BAD marker for the IPv4 header checksum.
+ */
+static void
+oct_rx_ol_flags_populate (u32 *tbl)
+{
+  u32 idx;
+
+  for (idx = 0; idx < OCT_RX_OL_FLAGS_TBL_SZ; idx++)
+    {
+      u16 errlev = idx & 0xf;
+      u16 errcode = (idx >> 4) & 0xff;
+      /* default: L4 not validated, ip4 cksum not trusted */
+      u32 l4 = 0;
+      u32 ip4_bad = OCT_RX_OL_F_IP4_CKSUM_BAD;
+
+      switch (errlev)
+	{
+	case NPC_ERRLEV_RE:
+	  if (errcode == 0)
+	    {
+	      /* no error */
+	      l4 = OCT_RX_OL_L4_MASK;
+	      ip4_bad = 0;
+	    }
+	  else
+	    {
+	      /* rx/l2 error (fcs, runt, length): ip and l4 both bad */
+	      l4 = VNET_BUFFER_F_L4_CHECKSUM_COMPUTED;
+	    }
+	  break;
+
+	case NPC_ERRLEV_LC:
+	  /* outer l3: only ip4 cksum affected, l4 unknown */
+	  if (errcode != NPC_EC_OIP4_CSUM &&
+	      errcode != NPC_EC_IP_FRAG_OFFSET_1)
+	    ip4_bad = 0;
+	  break;
+
+	case NPC_ERRLEV_LG:
+	  /* inner l3: only ip4 cksum affected, l4 unknown */
+	  if (errcode != NPC_EC_IIP4_CSUM)
+	    ip4_bad = 0;
+	  break;
+
+	case NPC_ERRLEV_NIX:
+	  if (errcode == NIX_RX_PERRCODE_OL4_CHK ||
+	      errcode == NIX_RX_PERRCODE_OL4_LEN ||
+	      errcode == NIX_RX_PERRCODE_OL4_PORT ||
+	      errcode == NIX_RX_PERRCODE_IL4_CHK ||
+	      errcode == NIX_RX_PERRCODE_IL4_LEN ||
+	      errcode == NIX_RX_PERRCODE_IL4_PORT)
+	    {
+	      /* l4 error: ip4 cksum still good */
+	      l4 = VNET_BUFFER_F_L4_CHECKSUM_COMPUTED;
+	      ip4_bad = 0;
+	    }
+	  else if (errcode == NIX_RX_PERRCODE_OL3_LEN ||
+		   errcode == NIX_RX_PERRCODE_IL3_LEN)
+	    {
+	      /* ip length error: ip bad, l4 unknown */
+	    }
+	  else
+	    {
+	      /* data fault, memout, etc.: ip and l4 both bad */
+	      l4 = VNET_BUFFER_F_L4_CHECKSUM_COMPUTED;
+	    }
+	  break;
+
+	default:
+	  /* other error levels: l4 not validated, ip4 cksum not trusted */
+	  break;
+	}
+
+      tbl[idx] = l4 | ip4_bad;
+    }
+}
+
+void
+oct_rx_ol_flags_init (void)
+{
+  oct_main_t *om = &oct_main;
+
+  if (om->rx_ol_flags)
+    return;
+
+  om->rx_ol_flags = clib_mem_alloc_aligned (
+    OCT_RX_OL_FLAGS_TBL_SZ * sizeof (u32), CLIB_CACHE_LINE_BYTES);
+  oct_rx_ol_flags_populate (om->rx_ol_flags);
+}
+
+static_always_inline u32
+oct_rx_ol_flags_get (const u32 *tbl, u64 w0)
+{
+  return tbl[(w0 >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK];
+}
+
+/*
+ * Apply the L4 checksum flags for 4 buffers from the precomputed table and
+ * fold the IPv4-bad markers into ctx->ip4_cksum_ok. e0..e3 are the already
+ * extracted {errcode,errlev} table indices. tbl[0] is the no-error entry, so
+ * this is a safe no-op for good packets and needs no per-packet branch.
+ */
+static_always_inline void
+oct_rx_apply_ol_flags_x4 (const u32 *tbl, vlib_buffer_t **b, u32 e0, u32 e1,
+			  u32 e2, u32 e3, oct_rx_node_ctx_t *ctx)
+{
+  u32 ol0 = tbl[e0], ol1 = tbl[e1], ol2 = tbl[e2], ol3 = tbl[e3];
+
+  b[0]->flags = (b[0]->flags & ~OCT_RX_OL_L4_MASK) | (ol0 & OCT_RX_OL_L4_MASK);
+  b[1]->flags = (b[1]->flags & ~OCT_RX_OL_L4_MASK) | (ol1 & OCT_RX_OL_L4_MASK);
+  b[2]->flags = (b[2]->flags & ~OCT_RX_OL_L4_MASK) | (ol2 & OCT_RX_OL_L4_MASK);
+  b[3]->flags = (b[3]->flags & ~OCT_RX_OL_L4_MASK) | (ol3 & OCT_RX_OL_L4_MASK);
+
+  if ((ol0 | ol1 | ol2 | ol3) & OCT_RX_OL_F_IP4_CKSUM_BAD)
+    ctx->ip4_cksum_ok = 0;
+}
 
 static_always_inline u64
 oct_get_wqe_from_cpt_hdr (union cpt_parse_hdr_u *cpt_hdr, const u64 fp_flags)
@@ -1529,8 +1668,8 @@ static_always_inline u32
 oct_rx_inl_ipsec_vlib_from_cq (
   vlib_main_t *vm, vlib_node_runtime_t *node, oct_nix_rx_cqe_desc_t *d,
   vlib_buffer_t **b, oct_rx_node_ctx_t *ctx, vlib_buffer_template_t *bt,
-  union cpt_parse_hdr_u *cpt_hdr, vlib_buffer_t **buffs, u32 *err_flags,
-  u16 *next, u16 *buffer_next_index, const u64 fp_flags)
+  union cpt_parse_hdr_u *cpt_hdr, vlib_buffer_t **buffs, u16 *next,
+  u16 *buffer_next_index, const u32 *ol_flags_tbl, const u64 fp_flags)
 {
   union nix_rx_parse_u *orig_rxp, *rxp;
   u32 is_fail, olen, esp_sz, l2_ol3_sz;
@@ -1549,12 +1688,14 @@ oct_rx_inl_ipsec_vlib_from_cq (
   esp_sz = olen - l2_ol3_sz;
   b[0]->template = *bt;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
-  err_flag = ((d[0].parse.w[0] >> 20) & 0xFFF);
+  err_flag = ((d[0].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK);
   if (PREDICT_FALSE (err_flag))
     {
-      b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-		       VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-      *err_flags |= err_flag;
+      u32 ol = oct_rx_ol_flags_get (ol_flags_tbl, d[0].parse.w[0]);
+      b[0]->flags &= ~OCT_RX_OL_L4_MASK;
+      b[0]->flags |= ol & OCT_RX_OL_L4_MASK;
+      if (ol & OCT_RX_OL_F_IP4_CKSUM_BAD)
+	ctx->ip4_cksum_ok = 0;
     }
 
   is_fail = oct_ipsec_is_inl_op_fail (cpt_hdr, fp_flags);
@@ -1594,8 +1735,8 @@ static_always_inline u32
 oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
 		     vlib_buffer_t **b, oct_rx_node_ctx_t *ctx,
 		     vlib_buffer_template_t *bt, vlib_buffer_t **buffs,
-		     u32 *err_flags, u16 *next, u16 *buffer_next_index,
-		     const u64 fp_flags)
+		     u16 *next, u16 *buffer_next_index,
+		     const u32 *ol_flags_tbl, const u64 fp_flags)
 {
   u32 err_flag;
 
@@ -1603,12 +1744,14 @@ oct_rx_vlib_from_cq (vlib_main_t *vm, oct_nix_rx_cqe_desc_t *d,
   b[0]->template = *bt;
   ctx->n_rx_bytes += b[0]->current_length = d[0].sg0.seg1_size;
   b[0]->flow_id = d[0].parse.w[3] >> 48;
-  err_flag = ((d[0].parse.w[0] >> 20) & 0xFFF);
+  err_flag = ((d[0].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK);
   if (PREDICT_FALSE (err_flag))
     {
-      b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-		       VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-      *err_flags |= err_flag;
+      u32 ol = oct_rx_ol_flags_get (ol_flags_tbl, d[0].parse.w[0]);
+      b[0]->flags &= ~OCT_RX_OL_L4_MASK;
+      b[0]->flags |= ol & OCT_RX_OL_L4_MASK;
+      if (ol & OCT_RX_OL_F_IP4_CKSUM_BAD)
+	ctx->ip4_cksum_ok = 0;
     }
 
   ctx->n_segs += 1;
@@ -1656,13 +1799,14 @@ oct_rx_flush_meta_burst (u16 lmt_id, u64 data, u16 lnum, uintptr_t aura_handle)
 static_always_inline u32
 oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      oct_rx_node_ctx_t *ctx, vnet_dev_rx_queue_t *rxq, u32 n,
-	      vlib_buffer_t **buffers, const u64 fp_flags)
+	      vlib_buffer_t **buffers, const u32 *ol_flags_tbl,
+	      const u64 fp_flags)
 {
   oct_rxq_t *crq = vnet_dev_get_rx_queue_data (rxq);
   vlib_buffer_template_t bt = vnet_dev_get_rx_queue_if_buffer_template (rxq);
   u32 b0_err_flags = 0, b1_err_flags = 0;
   u32 b2_err_flags = 0, b3_err_flags = 0;
-  u32 n_left, err_flags = 0, err_flags_x4 = 0;
+  u32 n_left, err_flags_x4 = 0;
   oct_nix_rx_cqe_desc_t *d = ctx->next_desc;
   union cpt_parse_hdr_u *cpt_hdr0, *cpt_hdr1;
   union cpt_parse_hdr_u *cpt_hdr2, *cpt_hdr3;
@@ -1745,31 +1889,22 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  b[2]->flow_id = d[2].parse.w[3] >> 48;
 	  b[3]->flow_id = d[3].parse.w[3] >> 48;
 
-	  b0_err_flags = (d[0].parse.w[0] >> 20) & 0xFFF;
-	  b1_err_flags = (d[1].parse.w[0] >> 20) & 0xFFF;
-	  b2_err_flags = (d[2].parse.w[0] >> 20) & 0xFFF;
-	  b3_err_flags = (d[3].parse.w[0] >> 20) & 0xFFF;
+	  b0_err_flags =
+	    (d[0].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
+	  b1_err_flags =
+	    (d[1].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
+	  b2_err_flags =
+	    (d[2].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
+	  b3_err_flags =
+	    (d[3].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
 
 	  err_flags_x4 =
 	    b0_err_flags | b1_err_flags | b2_err_flags | b3_err_flags;
 
 	  if (PREDICT_FALSE (err_flags_x4))
-	    {
-	      err_flags |= err_flags_x4;
-
-	      if (b0_err_flags)
-		b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	      if (b1_err_flags)
-		b[1]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	      if (b2_err_flags)
-		b[2]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	      if (b3_err_flags)
-		b[3]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	    }
+	    oct_rx_apply_ol_flags_x4 (ol_flags_tbl, b, b0_err_flags,
+				      b1_err_flags, b2_err_flags, b3_err_flags,
+				      ctx);
 
 	  if (fp_flags & OCT_FP_FLAG_TRACE_EN)
 	    {
@@ -2003,31 +2138,22 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  b[2]->flow_id = d[2].parse.w[3] >> 48;
 	  b[3]->flow_id = d[3].parse.w[3] >> 48;
 
-	  b0_err_flags = (d[0].parse.w[0] >> 20) & 0xFFF;
-	  b1_err_flags = (d[1].parse.w[0] >> 20) & 0xFFF;
-	  b2_err_flags = (d[2].parse.w[0] >> 20) & 0xFFF;
-	  b3_err_flags = (d[3].parse.w[0] >> 20) & 0xFFF;
+	  b0_err_flags =
+	    (d[0].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
+	  b1_err_flags =
+	    (d[1].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
+	  b2_err_flags =
+	    (d[2].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
+	  b3_err_flags =
+	    (d[3].parse.w[0] >> OCT_RX_ERR_SHIFT) & OCT_RX_ERR_MASK;
 
 	  err_flags_x4 =
 	    b0_err_flags | b1_err_flags | b2_err_flags | b3_err_flags;
 
 	  if (PREDICT_FALSE (err_flags_x4))
-	    {
-	      err_flags |= err_flags_x4;
-
-	      if (b0_err_flags)
-		b[0]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	      if (b1_err_flags)
-		b[1]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	      if (b2_err_flags)
-		b[2]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	      if (b3_err_flags)
-		b[3]->flags &= ~(VNET_BUFFER_F_L4_CHECKSUM_CORRECT |
-				 VNET_BUFFER_F_L4_CHECKSUM_COMPUTED);
-	    }
+	    oct_rx_apply_ol_flags_x4 (ol_flags_tbl, b, b0_err_flags,
+				      b1_err_flags, b2_err_flags, b3_err_flags,
+				      ctx);
 
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
@@ -2048,48 +2174,48 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  if (is_b0_from_cpt)
 	    {
 	      cpt_hdr0 = (union cpt_parse_hdr_u *) *(((u64 *) &d[0]) + 9);
-	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
-					     cpt_hdr0, buffs, &err_flags, next,
-					     &buffer_next_index, fp_flags);
+	      oct_rx_inl_ipsec_vlib_from_cq (
+		vm, node, &d[0], &b[0], ctx, &bt, cpt_hdr0, buffs, next,
+		&buffer_next_index, ol_flags_tbl, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, buffs, &err_flags,
-				 next, &buffer_next_index, fp_flags);
+	    oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, buffs, next,
+				 &buffer_next_index, ol_flags_tbl, fp_flags);
 
 	  if (is_b1_from_cpt)
 	    {
 	      cpt_hdr1 = (union cpt_parse_hdr_u *) *(((u64 *) &d[1]) + 9);
-	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[1], &b[1], ctx, &bt,
-					     cpt_hdr1, buffs, &err_flags, next,
-					     &buffer_next_index, fp_flags);
+	      oct_rx_inl_ipsec_vlib_from_cq (
+		vm, node, &d[1], &b[1], ctx, &bt, cpt_hdr1, buffs, next,
+		&buffer_next_index, ol_flags_tbl, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr1, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[1], &b[1], ctx, &bt, buffs, &err_flags,
-				 next, &buffer_next_index, fp_flags);
+	    oct_rx_vlib_from_cq (vm, &d[1], &b[1], ctx, &bt, buffs, next,
+				 &buffer_next_index, ol_flags_tbl, fp_flags);
 	  if (is_b2_from_cpt)
 	    {
 	      cpt_hdr2 = (union cpt_parse_hdr_u *) *(((u64 *) &d[2]) + 9);
-	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[2], &b[2], ctx, &bt,
-					     cpt_hdr2, buffs, &err_flags, next,
-					     &buffer_next_index, fp_flags);
+	      oct_rx_inl_ipsec_vlib_from_cq (
+		vm, node, &d[2], &b[2], ctx, &bt, cpt_hdr2, buffs, next,
+		&buffer_next_index, ol_flags_tbl, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr2, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[2], &b[2], ctx, &bt, buffs, &err_flags,
-				 next, &buffer_next_index, fp_flags);
+	    oct_rx_vlib_from_cq (vm, &d[2], &b[2], ctx, &bt, buffs, next,
+				 &buffer_next_index, ol_flags_tbl, fp_flags);
 	  if (is_b3_from_cpt)
 	    {
 	      cpt_hdr3 = (union cpt_parse_hdr_u *) *(((u64 *) &d[3]) + 9);
-	      oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[3], &b[3], ctx, &bt,
-					     cpt_hdr3, buffs, &err_flags, next,
-					     &buffer_next_index, fp_flags);
+	      oct_rx_inl_ipsec_vlib_from_cq (
+		vm, node, &d[3], &b[3], ctx, &bt, cpt_hdr3, buffs, next,
+		&buffer_next_index, ol_flags_tbl, fp_flags);
 	      OCT_PUSH_META_TO_FREE ((u64) cpt_hdr3, laddr, &loff);
 	    }
 	  else
-	    oct_rx_vlib_from_cq (vm, &d[3], &b[3], ctx, &bt, buffs, &err_flags,
-				 next, &buffer_next_index, fp_flags);
+	    oct_rx_vlib_from_cq (vm, &d[3], &b[3], ctx, &bt, buffs, next,
+				 &buffer_next_index, ol_flags_tbl, fp_flags);
 	}
       /* Check if lmtline border is crossed and adjust lnum */
       if (loff > 15)
@@ -2162,15 +2288,14 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
       if (is_b0_from_cpt)
 	{
 	  cpt_hdr0 = (union cpt_parse_hdr_u *) *(((u64 *) &d[0]) + 9);
-	  oct_rx_inl_ipsec_vlib_from_cq (vm, node, &d[0], &b[0], ctx, &bt,
-					 cpt_hdr0, buffs, &err_flags, next,
-					 &buffer_next_index, fp_flags);
+	  oct_rx_inl_ipsec_vlib_from_cq (
+	    vm, node, &d[0], &b[0], ctx, &bt, cpt_hdr0, buffs, next,
+	    &buffer_next_index, ol_flags_tbl, fp_flags);
 	  OCT_PUSH_META_TO_FREE ((u64) cpt_hdr0, laddr, &loff);
 	}
       else
-
-	oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, buffs, &err_flags,
-			     next, &buffer_next_index, fp_flags);
+	oct_rx_vlib_from_cq (vm, &d[0], &b[0], ctx, &bt, buffs, next,
+			     &buffer_next_index, ol_flags_tbl, fp_flags);
     }
   if (loff)
     {
@@ -2192,8 +2317,6 @@ oct_rx_batch (vlib_main_t *vm, vlib_node_runtime_t *node,
   ctx->n_rx_pkts += buffer_next_index;
   ctx->n_left_to_next -= buffer_next_index;
   ctx->buffer_start_index += buffer_next_index;
-  if (err_flags)
-    ctx->parse_w0_or = (err_flags << 20);
 
   return buffer_next_index;
 }
@@ -2402,7 +2525,9 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
     .next = next,
     .n_left_to_next = OCT_FRAME_SIZE,
     .buffer_start_index = 0,
+    .ip4_cksum_ok = 1,
   }, *ctx = &_ctx;
+  const u32 *ol_flags_tbl = oct_main.rx_ol_flags;
 
   /* get head and tail from NIX_LF_CQ_OP_STATUS */
   status.as_u64 = roc_atomic64_add_sync (crq->cq.wdata, crq->cq.status);
@@ -2424,10 +2549,12 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	clib_min (cq_size - head, clib_min (n_desc, ctx->n_left_to_next / 4));
 
       if (PREDICT_TRUE (ctx->trace_count == 0))
-	n_processed += oct_rx_batch (vm, node, ctx, rxq, n, buffs, flags);
+	n_processed +=
+	  oct_rx_batch (vm, node, ctx, rxq, n, buffs, ol_flags_tbl, flags);
       else
-	n_processed += oct_rx_batch (vm, node, ctx, rxq, n, buffs,
-				     OCT_FP_FLAG_TRACE_EN | flags);
+	n_processed +=
+	  oct_rx_batch (vm, node, ctx, rxq, n, buffs, ol_flags_tbl,
+			OCT_FP_FLAG_TRACE_EN | flags);
 
       if (n_processed >= 256)
 	break;
@@ -2460,7 +2587,6 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       vlib_next_frame_t *nf;
       vlib_frame_t *f;
       ethernet_input_frame_t *ef;
-      oct_nix_rx_parse_t p = { .w[0] = ctx->parse_w0_or };
       nf = vlib_node_runtime_get_next_frame (vm, node, ctx->next_index);
       f = vlib_get_frame (vm, nf->frame);
       f->flags = ETH_INPUT_FRAME_F_SINGLE_SW_IF_IDX;
@@ -2469,7 +2595,7 @@ oct_rx_node_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       ef->sw_if_index = ctx->sw_if_index;
       ef->hw_if_index = ctx->hw_if_index;
 
-      if (p.f.errcode == 0 && p.f.errlev == 0)
+      if (ctx->ip4_cksum_ok)
 	f->flags |= ETH_INPUT_FRAME_F_IP4_CKSUM_OK;
 
       vlib_frame_no_append (f);

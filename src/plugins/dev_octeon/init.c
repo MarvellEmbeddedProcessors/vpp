@@ -1116,6 +1116,8 @@ oct_plugin_init (vlib_main_t *vm)
 
   roc_npa_lf_init_cb_register (oct_npa_max_pools_set_cb);
 
+  oct_rx_ol_flags_init ();
+
   /* set default values in oct_main */
   oct_main.npa_max_pools = OCT_NPA_MAX_POOLS;
   oct_main.use_single_rx_aura = 1;

@@ -197,9 +197,13 @@ typedef struct
   u64 rx_aura_handle;
   oct_device_t **oct_dev;
   oct_per_thread_data_t *per_thread_data;
+  u32 *rx_ol_flags;
 } oct_main_t;
 
 extern oct_main_t oct_main;
+
+/* rx_node.c */
+void oct_rx_ol_flags_init (void);
 
 /* format.c */
 format_function_t format_oct_port_status;
