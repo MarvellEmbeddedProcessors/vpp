@@ -123,6 +123,7 @@ bytecode
 byteswap
 cacheline
 callees
+capa
 Castelino
 ccache
 ccdd
