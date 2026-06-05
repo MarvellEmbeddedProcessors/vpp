@@ -200,12 +200,30 @@ autoreply define tm_sys_level_get_capabilities
  * @param sw_if_idx - Software interface index.
  * @param node_id - Identifier of the TM node whose statistics are to be read.
  */
-autoreply define tm_sys_node_read_stats
+define tm_sys_node_read_stats
 {
   u32 client_index;
   u32 context;
   u32 sw_if_idx;
   u32 node_id;
+};
+
+/**
+ * @brief Reply for reading the statistics of a TM node.
+ *
+ * @param context - Sender context, to match reply with request.
+ * @param retval - Return value indicating success or failure of the operation.
+ * @param node_id - Identifier of the TM node whose statistics were read.
+ * @param n_pkts - Number of packets scheduled from this node.
+ * @param n_bytes - Number of bytes scheduled from this node.
+ */
+define tm_sys_node_read_stats_reply
+{
+  u32 context;
+  i32 retval;
+  u32 node_id;
+  u64 n_pkts;
+  u64 n_bytes;
 };
 
 /**

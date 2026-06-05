@@ -556,8 +556,6 @@ oct_tm_sys_node_read_stats (u32 hw_if_idx, u32 node_id,
 	{
 	  stats->n_pkts = qstats.tx_pkts;
 	  stats->n_bytes = qstats.tx_octs;
-	  log_info (dev, "TM node %u stats: pkts %" PRIu64 " bytes %" PRIu64,
-		    node_id, stats->n_pkts, stats->n_bytes);
 	}
       goto exit;
     }

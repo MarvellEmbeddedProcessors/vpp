@@ -199,7 +199,11 @@ vl_api_tm_sys_node_read_stats_t_handler (vl_api_tm_sys_node_read_stats_t *mp)
 
   rv = vnet_tm_sys_node_read_stats (sw->hw_if_index, node_id, &s_p);
 
-  REPLY_MACRO (VL_API_TM_SYS_NODE_READ_STATS_REPLY);
+  REPLY_MACRO2 (VL_API_TM_SYS_NODE_READ_STATS_REPLY, ({
+		  rmp->node_id = clib_host_to_net_u32 (node_id);
+		  rmp->n_pkts = clib_host_to_net_u64 (s_p.n_pkts);
+		  rmp->n_bytes = clib_host_to_net_u64 (s_p.n_bytes);
+		}));
 }
 
 void

@@ -21,6 +21,13 @@ typedef struct
 
 tm_test_main_t tm_test_main;
 
+static struct
+{
+  u32 node_id;
+  u64 n_pkts;
+  u64 n_bytes;
+} tm_stats;
+
 #define __plugin_msg_base tm_test_main.msg_id_base
 #include <vlibapi/vat_helper_macros.h>
 uword unformat_sw_if_index (unformat_input_t *input, va_list *args);
@@ -444,6 +451,15 @@ api_tm_sys_node_read_stats (vat_main_t *vam)
   mp->node_id = clib_host_to_net_u32 (tm_node_id);
   S (mp);
   W (ret);
+
+  if (ret == 0)
+    {
+      vlib_cli_output (vam->vlib_main, "- STATS for node %u",
+		       tm_stats.node_id);
+      vlib_cli_output (vam->vlib_main, "-- pkts (%llu) bytes (%llu)",
+		       tm_stats.n_pkts, tm_stats.n_bytes);
+    }
+
   return ret;
 }
 
@@ -592,6 +608,24 @@ api_tm_sys_stop_tm (vat_main_t *vam)
   S (mp);
   W (ret);
   return ret;
+}
+
+static void
+vl_api_tm_sys_node_read_stats_reply_t_handler (
+  vl_api_tm_sys_node_read_stats_reply_t *mp)
+{
+  vat_main_t *vam = tm_test_main.vat_main;
+  i32 retval = clib_net_to_host_i32 (mp->retval);
+
+  if (retval == 0)
+    {
+      tm_stats.node_id = clib_net_to_host_u32 (mp->node_id);
+      tm_stats.n_pkts = clib_net_to_host_u64 (mp->n_pkts);
+      tm_stats.n_bytes = clib_net_to_host_u64 (mp->n_bytes);
+    }
+
+  vam->retval = retval;
+  vam->result_ready = 1;
 }
 
 #include <vnet/tm/tm.api_test.c>
