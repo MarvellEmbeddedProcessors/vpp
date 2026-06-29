@@ -884,6 +884,7 @@ vnet_dev_port_add_sec_if (vlib_main_t *vm, vnet_dev_port_t *port, void *ptr)
       sif->dev_instance = di - dm->dev_instances;
       di->port = port;
       di->sec_if_index = sip - port->interfaces->secondary_interfaces;
+      di->is_primary_if = 0;
 
       driver = pool_elt_at_index (dm->drivers, dev->driver_index);
 
@@ -910,15 +911,16 @@ vnet_dev_port_add_sec_if (vlib_main_t *vm, vnet_dev_port_t *port, void *ptr)
       sif->sw_if_index = sw->sw_if_index;
       sif->next_index =
 	vnet_dev_default_next_index_by_port_type[port->attr.type];
+      sif->rx_next_index =
+	vnet_dev_default_next_index_by_port_type[port->attr.type];
       sif->interface_created = 1;
+      sif->tx_node_index = hw->tx_node_index;
       vnet_dev_port_update_tx_node_runtime (vm, port);
       vnet_hw_interface_set_flags (
 	vnm, sif->hw_if_index,
 	port->link_up ? VNET_HW_INTERFACE_FLAG_LINK_UP : 0);
       if (port->speed)
 	vnet_hw_interface_set_link_speed (vnm, sif->hw_if_index, port->speed);
-
-      sif->tx_node_index = hw->tx_node_index;
 
       caps |= port->attr.caps.interrupt_mode ? VNET_HW_IF_CAP_INT_MODE : 0;
       caps |= port->attr.caps.mac_filter ? VNET_HW_IF_CAP_MAC_FILTER : 0;
@@ -942,6 +944,8 @@ vnet_dev_port_add_sec_if (vlib_main_t *vm, vnet_dev_port_t *port, void *ptr)
       q->sec_if_rt_data[sif->index] = rtd;
 
       vnet_dev_port_init_if_rt_data (vm, port, rtd, sif->sw_if_index);
+      ASSERT (sif->index <= CLIB_U16_MAX);
+      rtd->sec_if_index = (u16) sif->index;
       vnet_dev_rx_queue_rt_request (
 	vm, q, (vnet_dev_rx_queue_rt_req_t){ .update_next_index = 1 });
     }
