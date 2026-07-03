@@ -322,7 +322,7 @@ oct_parse_l3 (oct_flow_parse_state *pst)
 	  pst->generic.off += sizeof (u32);
 	  pst->layer++;
 	}
-      while (label_stack_bottom);
+      while (!label_stack_bottom);
 
       pst->nxt_proto = 0;
       return 0;
@@ -486,7 +486,7 @@ oct_parse_tunnel (oct_flow_parse_state *pst)
 	  vxlan_header_t *vxlan_spec =
 	    (vxlan_header_t *) &pst->generic.spec[pst->generic.off];
 	  vxlan_header_t *vxlan_mask =
-	    (vxlan_header_t *) &pst->generic.spec[pst->generic.off];
+	    (vxlan_header_t *) &pst->generic.mask[pst->generic.off];
 	  pst->items[pst->layer].spec = (void *) vxlan_spec;
 	  pst->items[pst->layer].mask = (void *) vxlan_mask;
 	  pst->items[pst->layer].size = sizeof (vxlan_header_t);
