@@ -367,6 +367,7 @@ test_flow (vlib_main_t * vm, unformat_input_t * input,
   bool vni_set = false;
   bool l2tpv3oip_set = false;
   bool ipsec_esp_set = false, ipsec_ah_set = false;
+  bool generic_spec_set = false, generic_mask_set = false;
   u8 *rss_type[3] = { };
   u8 *type_str = NULL;
   u8 *spec = NULL;
@@ -390,9 +391,37 @@ test_flow (vlib_main_t * vm, unformat_input_t * input,
       else if (unformat (line_input, "disable"))
 	action = FLOW_DISABLE;
       else if (unformat (line_input, "spec %s", &spec))
-	;
+	{
+	  u32 max = sizeof (flow.generic.pattern.spec);
+	  if (vec_len (spec) > max)
+	    {
+	      vec_free (spec);
+	      spec = 0;
+	      unformat_free (line_input);
+	      return clib_error_return (
+		0, "generic spec too large, max size of %u", max);
+	    }
+	  clib_memcpy (flow.generic.pattern.spec, spec, vec_len (spec));
+	  vec_free (spec);
+	  spec = 0;
+	  generic_spec_set = true;
+	}
       else if (unformat (line_input, "mask %s", &mask))
-	;
+	{
+	  u32 max = sizeof (flow.generic.pattern.mask);
+	  if (vec_len (mask) > max)
+	    {
+	      vec_free (mask);
+	      mask = 0;
+	      unformat_free (line_input);
+	      return clib_error_return (
+		0, "generic mask too large, max size of %u", max);
+	    }
+	  clib_memcpy (flow.generic.pattern.mask, mask, vec_len (mask));
+	  vec_free (mask);
+	  mask = 0;
+	  generic_mask_set = true;
+	}
       else if (unformat (line_input, "eth-type %U",
 			 unformat_ethernet_type_host_byte_order, &eth_type))
 	flow_class = FLOW_ETHERNET_CLASS;
@@ -645,7 +674,7 @@ test_flow (vlib_main_t * vm, unformat_input_t * input,
 	  break;
 
 	default:
-	  if (spec && mask)
+	  if (generic_spec_set && generic_mask_set)
 	    {
 	      type = VNET_FLOW_TYPE_GENERIC;
 	      break;
@@ -785,14 +814,6 @@ test_flow (vlib_main_t * vm, unformat_input_t * input,
 	      break;
 	    }
 	}
-      if (type == VNET_FLOW_TYPE_GENERIC)
-	{
-	  clib_memcpy (flow.generic.pattern.spec, spec,
-		       sizeof (flow.generic.pattern.spec));
-	  clib_memcpy (flow.generic.pattern.mask, mask,
-		       sizeof (flow.generic.pattern.mask));
-	}
-
       flow.type = type;
       rv = vnet_flow_add (vnm, &flow, &flow_index);
       if (!rv)

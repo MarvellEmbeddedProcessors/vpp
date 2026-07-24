@@ -76,6 +76,31 @@ VLIB_REGISTER_LOG_CLASS (oct_log, static) = {
 #define GTPU_PORT  2152
 #define VXLAN_PORT 4789
 
+/* Guard every pst->layer++ to prevent stack buffer overflow of item_info[]. */
+#define OCT_FLOW_MAX_ITEMS (ROC_NPC_ITEM_TYPE_END - 1)
+
+#define OCT_FLOW_CHECK_LAYER(pst)                                             \
+  do                                                                          \
+    {                                                                         \
+      if ((pst)->layer >= OCT_FLOW_MAX_ITEMS)                                 \
+	return -1;                                                            \
+    }                                                                         \
+  while (0)
+
+/*
+ * Ensure at least (n) bytes remain before a protocol header at the current
+ * offset is dereferenced or copied. generic.len is the minimum of the spec
+ * and mask buffer lengths, so this guards reads of both buffers.
+ */
+
+#define OCT_FLOW_CHECK_BYTES(pst, n)                                          \
+  do                                                                          \
+    {                                                                         \
+      if ((uword) (pst)->generic.off + (n) > (uword) (pst)->generic.len)      \
+	return -1;                                                            \
+    }                                                                         \
+  while (0)
+
 typedef struct
 {
   u16 src_port;
@@ -235,6 +260,10 @@ oct_flow_rule_create (vnet_dev_port_t *port, struct roc_npc_action *actions,
 static int
 oct_parse_l2 (oct_flow_parse_state *pst)
 {
+  u16 tpid, etype;
+
+  OCT_FLOW_CHECK_BYTES (pst, sizeof (ethernet_header_t));
+
   struct roc_npc_flow_item_eth *eth_spec =
     (struct roc_npc_flow_item_eth *) &pst->oct_drv.spec[pst->oct_drv.off];
   struct roc_npc_flow_item_eth *eth_mask =
@@ -243,13 +272,13 @@ oct_parse_l2 (oct_flow_parse_state *pst)
     (ethernet_header_t *) &pst->generic.mask[pst->generic.off];
   ethernet_header_t *eth_hdr =
     (ethernet_header_t *) &pst->generic.spec[pst->generic.off];
-  u16 tpid, etype;
 
   tpid = etype = clib_net_to_host_u16 (eth_hdr->type);
   clib_memcpy_fast (eth_spec, eth_hdr, sizeof (ethernet_header_t));
   clib_memcpy_fast (eth_mask, eth_hdr_mask, sizeof (ethernet_header_t));
   eth_spec->has_vlan = 0;
 
+  OCT_FLOW_CHECK_LAYER (pst);
   pst->items[pst->layer].spec = (void *) eth_spec;
   pst->items[pst->layer].mask = (void *) eth_mask;
   pst->items[pst->layer].size = sizeof (ethernet_header_t);
@@ -268,8 +297,11 @@ oct_parse_l2 (oct_flow_parse_state *pst)
 
   while (tpid == ETHERNET_TYPE_DOT1AD || tpid == ETHERNET_TYPE_VLAN)
     {
-      if (pst->generic.off >= pst->generic.len)
+      if (pst->generic.off + sizeof (ethernet_vlan_header_t) >
+	  pst->generic.len)
 	break;
+
+      OCT_FLOW_CHECK_LAYER (pst);
 
       vlan_hdr =
 	(ethernet_vlan_header_t *) &pst->generic.spec[pst->generic.off];
@@ -311,6 +343,11 @@ oct_parse_l3 (oct_flow_parse_state *pst)
       do
 	{
 
+	  if (pst->generic.off + sizeof (u32) > pst->generic.len)
+	    return 0;
+
+	  OCT_FLOW_CHECK_LAYER (pst);
+
 	  u8 *mpls_spec = &pst->generic.spec[pst->generic.off];
 	  u8 *mpls_mask = &pst->generic.mask[pst->generic.off];
 
@@ -329,6 +366,8 @@ oct_parse_l3 (oct_flow_parse_state *pst)
     }
   else if (pst->nxt_proto == ETHERNET_TYPE_IP4)
     {
+      OCT_FLOW_CHECK_LAYER (pst);
+      OCT_FLOW_CHECK_BYTES (pst, sizeof (ip4_header_t));
       ip4_header_t *ip4_spec =
 	(ip4_header_t *) &pst->generic.spec[pst->generic.off];
       ip4_header_t *ip4_mask =
@@ -343,6 +382,8 @@ oct_parse_l3 (oct_flow_parse_state *pst)
     }
   else if (pst->nxt_proto == ETHERNET_TYPE_IP6)
     {
+      OCT_FLOW_CHECK_LAYER (pst);
+      OCT_FLOW_CHECK_BYTES (pst, sizeof (ip6_header_t));
       struct roc_npc_flow_item_ipv6 *ip6_spec =
 	(struct roc_npc_flow_item_ipv6 *) &pst->oct_drv.spec[pst->oct_drv.off];
       struct roc_npc_flow_item_ipv6 *ip6_mask =
@@ -370,11 +411,20 @@ oct_parse_l3 (oct_flow_parse_state *pst)
 	  if (pst->generic.off >= pst->generic.len)
 	    return 0;
 
+	  OCT_FLOW_CHECK_LAYER (pst);
+	  OCT_FLOW_CHECK_BYTES (pst, sizeof (ip6_ext_header_t));
+
 	  ip6_ext_header_t *ip6_ext_spec =
 	    (ip6_ext_header_t *) &pst->generic.spec[pst->generic.off];
 	  ip6_ext_header_t *ip6_ext_mask =
 	    (ip6_ext_header_t *) &pst->generic.mask[pst->generic.off];
 	  nxt_hdr = ip6_ext_spec->next_hdr;
+
+	  /*
+	   * Length is header-controlled; ensure the full extension header
+	   * stays within the generic buffer before advancing.
+	   */
+	  OCT_FLOW_CHECK_BYTES (pst, ip6_ext_header_len (ip6_ext_spec));
 
 	  pst->items[pst->layer].spec = (void *) ip6_ext_spec;
 	  pst->items[pst->layer].mask = (void *) ip6_ext_mask;
@@ -388,11 +438,12 @@ oct_parse_l3 (oct_flow_parse_state *pst)
 
       if (nxt_hdr == IP_PROTOCOL_IPV6_FRAGMENTATION)
 	{
+	  OCT_FLOW_CHECK_LAYER (pst);
+	  OCT_FLOW_CHECK_BYTES (pst, sizeof (ip6_frag_hdr_t));
 	  ip6_frag_hdr_t *ip6_ext_frag_spec =
 	    (ip6_frag_hdr_t *) &pst->generic.spec[pst->generic.off];
 	  ip6_frag_hdr_t *ip6_ext_frag_mask =
 	    (ip6_frag_hdr_t *) &pst->generic.mask[pst->generic.off];
-
 	  pst->items[pst->layer].spec = (void *) ip6_ext_frag_spec;
 	  pst->items[pst->layer].mask = (void *) ip6_ext_frag_mask;
 	  pst->items[pst->layer].size = sizeof (ip6_frag_hdr_t);
@@ -422,6 +473,8 @@ oct_parse_l4 (oct_flow_parse_state *pst)
                                                                               \
     {                                                                         \
                                                                               \
+      OCT_FLOW_CHECK_LAYER (pst);                                             \
+      OCT_FLOW_CHECK_BYTES (pst, sizeof (protocol_t));                        \
       protocol_t *spec = (protocol_t *) &pst->generic.spec[pst->generic.off]; \
       protocol_t *mask = (protocol_t *) &pst->generic.mask[pst->generic.off]; \
       pst->items[pst->layer].spec = spec;                                     \
@@ -454,6 +507,13 @@ oct_parse_tunnel (oct_flow_parse_state *pst)
   if (pst->generic.off >= pst->generic.len)
     return 0;
 
+  /*
+   * Tunnel detection inspects the previously parsed item; nothing to do if no
+   * inner layer exists yet.
+   */
+  if (pst->layer == 0)
+    return 0;
+
   if (pst->items[pst->layer - 1].type == ROC_NPC_ITEM_TYPE_GRE)
     {
       gre_header_t *gre_hdr = (gre_header_t *) pst->items[pst->layer - 1].spec;
@@ -468,6 +528,8 @@ oct_parse_tunnel (oct_flow_parse_state *pst)
 
       if (dport == GTPU_PORT)
 	{
+	  OCT_FLOW_CHECK_LAYER (pst);
+	  OCT_FLOW_CHECK_BYTES (pst, sizeof (gtpu_header_t));
 	  gtpu_header_t *gtpu_spec =
 	    (gtpu_header_t *) &pst->generic.spec[pst->generic.off];
 	  gtpu_header_t *gtpu_mask =
@@ -483,6 +545,8 @@ oct_parse_tunnel (oct_flow_parse_state *pst)
 	}
       else if (dport == VXLAN_PORT)
 	{
+	  OCT_FLOW_CHECK_LAYER (pst);
+	  OCT_FLOW_CHECK_BYTES (pst, sizeof (vxlan_header_t));
 	  vxlan_header_t *vxlan_spec =
 	    (vxlan_header_t *) &pst->generic.spec[pst->generic.off];
 	  vxlan_header_t *vxlan_mask =
@@ -610,21 +674,48 @@ oct_flow_add (vlib_main_t *vm, vnet_dev_port_t *port, vnet_flow_t *flow,
     {
       unformat_input_t input;
       int rc;
+      uword spec_len, mask_len;
 
-      unformat_init_string (
-	&input, (const char *) flow->generic.pattern.spec,
-	strlen ((const char *) flow->generic.pattern.spec));
-      unformat_user (&input, unformat_hex_string, &flow_spec);
-      unformat_free (&input);
+      /*
+       * pattern.spec/mask are fixed-size u8[1024] and are not guaranteed to be
+       * NULL-terminated; bound the scan and reject unterminated strings so we
+       * never read past the end of the struct.
+       */
+      spec_len = clib_strnlen ((const char *) flow->generic.pattern.spec,
+			       sizeof (flow->generic.pattern.spec));
+      mask_len = clib_strnlen ((const char *) flow->generic.pattern.mask,
+			       sizeof (flow->generic.pattern.mask));
+      if (spec_len == sizeof (flow->generic.pattern.spec) ||
+	  mask_len == sizeof (flow->generic.pattern.mask))
+	return VNET_DEV_ERR_NOT_SUPPORTED;
 
-      unformat_init_string (
-	&input, (const char *) flow->generic.pattern.mask,
-	strlen ((const char *) flow->generic.pattern.mask));
-      unformat_user (&input, unformat_hex_string, &flow_mask);
+      unformat_init_string (&input, (const char *) flow->generic.pattern.spec,
+			    spec_len);
+      rc = unformat_user (&input, unformat_hex_string, &flow_spec);
       unformat_free (&input);
+      if (!rc)
+	{
+	  vec_free (flow_spec);
+	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	}
+
+      unformat_init_string (&input, (const char *) flow->generic.pattern.mask,
+			    mask_len);
+      rc = unformat_user (&input, unformat_hex_string, &flow_mask);
+      unformat_free (&input);
+      if (!rc)
+	{
+	  vec_free (flow_spec);
+	  vec_free (flow_mask);
+	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	}
 
       vec_validate (drv_spec, 1024);
       vec_validate (drv_mask, 1024);
+      /*
+       * spec and mask are decoded independently; bound parsing by the shorter
+       * of the two so headers are never read past the end of either buffer.
+       */
       oct_flow_parse_state pst = {
 	.nxt_proto = 0,
 	.port = port,
@@ -632,7 +723,8 @@ oct_flow_add (vlib_main_t *vm, vnet_dev_port_t *port, vnet_flow_t *flow,
 	.oct_drv = { .spec = drv_spec, .mask = drv_mask },
 	.generic = { .spec = flow_spec,
 		     .mask = flow_mask,
-		     .len = vec_len (flow_spec) },
+		     .len =
+		       clib_min (vec_len (flow_spec), vec_len (flow_mask)) },
       };
 
       rc = oct_flow_generic_pattern_parse (&pst);
@@ -818,7 +910,8 @@ parse_flow_actions:
       if (!flow->queue_num)
 	{
 	  log_err (port->dev, "RSS action has no queues");
-	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	  rv = VNET_DEV_ERR_NOT_SUPPORTED;
+	  goto done;
 	}
       queues = clib_mem_alloc (sizeof (u16) * ifs->num_rx_queues);
 
@@ -829,7 +922,8 @@ parse_flow_actions:
       if (!flow_key)
 	{
 	  log_err (port->dev, "Invalid RSS hash function");
-	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	  rv = VNET_DEV_ERR_NOT_SUPPORTED;
+	  goto done;
 	}
       npc->flowkey_cfg_state = flow_key;
       rss_conf.queue_num = flow->queue_num;
@@ -846,7 +940,8 @@ parse_flow_actions:
 	  flow->mark_flow_id > (NPC_FLOW_FLAG_VAL - 2))
 	{
 	  log_err (port->dev, "mark flow id must be > 0 and < 0xfffe");
-	  return VNET_DEV_ERR_NOT_SUPPORTED;
+	  rv = VNET_DEV_ERR_NOT_SUPPORTED;
+	  goto done;
 	}
       /* RoC library adds 1 to id, so subtract 1 */
       mark.id = flow->mark_flow_id - 1;
@@ -861,6 +956,7 @@ parse_flow_actions:
 
   rv = oct_flow_rule_create (port, actions, item_info, flow, private_data);
 
+done:
   if (queues)
     clib_mem_free (queues);
 
