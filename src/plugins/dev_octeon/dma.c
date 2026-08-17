@@ -207,7 +207,6 @@ error:
 static void
 oct_dma_dev_lock (oct_dma_dev_t *odma)
 {
-  return;
   u8 expected = 0;
 
   if (odma->n_threads < 2)
@@ -227,7 +226,6 @@ oct_dma_dev_lock (oct_dma_dev_t *odma)
 static void
 oct_dma_dev_unlock (oct_dma_dev_t *odma)
 {
-  return;
   if (odma->n_threads < 2)
     return;
 
