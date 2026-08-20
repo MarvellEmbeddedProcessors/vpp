@@ -156,10 +156,31 @@ oct_flow_validate_params (vlib_main_t *vm, vnet_dev_port_t *port,
 			  vnet_dev_port_cfg_type_t type, u32 flow_index,
 			  uword *priv_data)
 {
-  vnet_dev_port_interfaces_t *ifs = port->interfaces;
-  vnet_flow_t *flow = vnet_get_flow (flow_index);
+  vnet_dev_port_interfaces_t *ifs;
+  vnet_flow_t *flow;
   u32 last_queue;
   u32 qid;
+
+  if (port == NULL)
+    {
+      vlib_log (VLIB_LOG_LEVEL_ERR, oct_log.class,
+		"flow validate: NULL port pointer");
+      return VNET_DEV_ERR_INVALID_ARG;
+    }
+
+  flow = vnet_get_flow (flow_index);
+  if (flow == NULL)
+    {
+      log_err (port->dev, "flow validate: invalid flow index %u", flow_index);
+      return VNET_DEV_ERR_INVALID_ARG;
+    }
+
+  ifs = port->interfaces;
+  if (ifs == NULL)
+    {
+      log_err (port->dev, "flow validate: port interfaces not initialized");
+      return VNET_DEV_ERR_NOT_READY;
+    }
 
   if ((flow->actions & VNET_FLOW_ACTION_REDIRECT_TO_QUEUE) &&
       flow->redirect_queue == ~0 && flow->type == VNET_FLOW_TYPE_IP4_IPSEC_ESP)
