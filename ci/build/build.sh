@@ -24,18 +24,18 @@ function help() {
 	echo "Mandatory Arguments"
 	echo "==================="
 	echo "--build-type         | -b            : Build type; release/debug"
-	echo "--deps_dir           | -d            : Deps dir"
+	echo "--deps-dir           | -d            : Deps dir"
 	echo ""
 	echo "Optional Arguments"
 	echo "==================="
-	echo "--octeon_version     | -o            : Version(cn10k, cn9k)"
+	echo "--octeon-version     | -o            : Version(cn10k, cn9k)"
 	echo "--help               | -h            : Print this help and exit"
 }
 
 SCRIPT_NAME="$(basename "$0")"
 if ! OPTS=$(getopt \
-	-o "b:d:oh" \
-	-l "build-type:,deps-dir:,octeon_version,help" \
+	-o "b:d:o:h" \
+	-l "build-type:,deps-dir:,octeon-version:,help" \
 	-n "$SCRIPT_NAME" \
 	-- "$@"); then
 	help
