@@ -30,8 +30,12 @@ typedef union
   {
     u64 aura : 20;
     u64 _reseved20 : 12;
-    u64 count_eot : 1;
-    u64 _reserved33 : 30;
+    /*
+     * COUNT_EOT is 1-bit wide on cn10k and 2-bit wide on cn20k. Model it as
+     * 2-bit wide for all cases. The upper bit is ignored on cn10k.
+     */
+    u64 count_eot : 2;
+    u64 _reserved34 : 29;
     u64 fabs : 1;
   };
   u64 as_u64;

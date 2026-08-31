@@ -2398,9 +2398,14 @@ oct_rxq_refill (vlib_main_t *vm, vnet_dev_rx_queue_t *rxq, u16 n_refill)
   lmt_addr += lmt_id << ROC_LMT_LINE_SIZE_LOG2;
   lines = (oct_npa_lf_aura_batch_free_line_t *) lmt_addr;
 
+  /*
+   * COUNT_EOT field is 1-bit wide on cn10k and 2-bit wide on cn20k.
+   * However, we can treat it as 2-bit wide for all cases since the upper
+   * bit is ignored on cn10k.
+   */
   oct_npa_lf_aura_batch_free0_t w0 = {
     .aura = roc_npa_aura_handle_to_aura (crq->aura_handle),
-    .count_eot = 1,
+    .count_eot = 0x3,
   };
 
   while (n_lines >= batch_max_lines)
