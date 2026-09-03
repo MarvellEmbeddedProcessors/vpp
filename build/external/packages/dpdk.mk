@@ -21,11 +21,11 @@ DPDK_MLX_IBV_LINK            ?= static
 # On most of the systems, default value for max lcores is 128
 DPDK_MAX_LCORES              ?=
 
-dpdk_version                 ?= 24.11.1
+dpdk_version                 ?= 25.11
 dpdk_base_url                ?= http://fast.dpdk.org/rel
 dpdk_tarball                 := dpdk-$(dpdk_version).tar.xz
 
-dpdk_tarball_sha256sum_24.11.1 := bcae7d42c449fc456dfb279feabcbe0599a29bebb2fe2905761e187339d96b8e
+dpdk_tarball_sha256sum_25.11 := 52e90d2a531ef3ded0283bd91abc94980698f1f6471fa09658a0217cf6609526
 
 dpdk_tarball_sha256sum       := $(dpdk_tarball_sha256sum_$(dpdk_version))
 dpdk_url                     := $(dpdk_base_url)/$(dpdk_tarball)
@@ -57,12 +57,9 @@ endif
 DPDK_DRIVERS_DISABLED := baseband/\*,	\
 	bus/dpaa,							\
 	bus/ifpga,							\
-	common/cnxk,						\
 	compress/isal,						\
-	compress/octeontx,					\
 	compress/zlib,						\
 	crypto/ccp,							\
-	crypto/cnxk,						\
 	crypto/dpaa_sec,					\
 	crypto/openssl,						\
 	crypto/aesni_mb,						\
@@ -70,16 +67,10 @@ DPDK_DRIVERS_DISABLED := baseband/\*,	\
 	crypto/kasumi,						\
 	crypto/snow3g,						\
 	crypto/zuc,						\
-	event/\*,							\
 	mempool/dpaa,						\
-	mempool/cnxk,						\
-	net/af_packet,						\
 	net/bnx2x,							\
-	net/bonding,						\
-	net/cnxk,							\
 	net/ipn3ke,							\
 	net/liquidio,						\
-	net/pcap,							\
 	net/pfe,							\
 	net/sfc,							\
 	net/softnic,						\
@@ -90,27 +81,10 @@ DPDK_DRIVERS_DISABLED := baseband/\*,	\
 DPDK_LIBS_DISABLED := acl,				\
 	bbdev,								\
 	bitratestats,						\
-	bpf,								\
-	cfgfile,							\
-	cnxk,							\
-	distributor,						\
-	efd,								\
-	fib,								\
-	flow_classify,						\
-	graph,								\
-	gro,								\
-	gso,								\
 	jobstats,							\
 	kni,								\
-	latencystats,						\
-	lpm,								\
 	member,								\
-	node,								\
 	pipeline,							\
-	port,								\
-	power,								\
-	rawdev,								\
-	rib,								\
 	table
 
 DPDK_MLX_CONFIG_FLAG :=
